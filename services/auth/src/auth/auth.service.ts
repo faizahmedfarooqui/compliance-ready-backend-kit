@@ -60,7 +60,7 @@ export class AuthService {
 
     // Spend the hashing work even when there is no user, so timing does not reveal
     // which addresses are registered, then fail identically either way.
-    if (!user || user.status !== "active") {
+    if (user?.status !== "active") {
       await this.passwords.verifyAgainstDecoy(password);
       throw new InvalidCredentialsError();
     }

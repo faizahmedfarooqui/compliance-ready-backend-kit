@@ -11,19 +11,22 @@ import {
   type Tenant,
   type TenantId,
 } from "@compliance-kit/common";
-import { PrismaClient as MasterPrismaClient, Prisma as MasterPrisma } from "./generated/master/client";
+import {
+  PrismaClient as MasterPrismaClient,
+  Prisma as MasterPrisma,
+} from "./generated/master/client";
 import { PrismaClient as TenantPrismaClient } from "./generated/tenant/client";
 
 export type MasterDb = MasterPrismaClient;
 export type TenantDb = TenantPrismaClient;
 
 /** A tenant row as the master registry stores it. */
-type TenantRecord = {
+interface TenantRecord {
   id: string;
   slug: string;
   databaseName: string;
   status: "provisioning" | "active" | "suspended";
-};
+}
 
 export interface ManagerOptions {
   /** Connection string for the master (control-plane) database. */
@@ -84,7 +87,7 @@ export class ConnectionManager {
       ? await this.master.tenant.findUnique({ where: { id: idOrSlug } })
       : await this.master.tenant.findUnique({ where: { slug: idOrSlug } });
 
-    if (!row || row.status !== "active") throw new TenantNotFoundError(idOrSlug);
+    if (row?.status !== "active") throw new TenantNotFoundError(idOrSlug);
     return this.toTenant(row);
   }
 

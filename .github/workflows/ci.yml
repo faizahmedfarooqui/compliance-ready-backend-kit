@@ -30,6 +30,49 @@ env:
   PORT: "3011"
 
 jobs:
+  # Needs no database, so it runs in parallel with the end-to-end job below and fails fast.
+  quality:
+    name: Lint, format, unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Build first. The lint config uses type-aware rules, which resolve `@compliance-kit/*`
+      # through each package's "types" field into dist/. With nothing built, every cross-package
+      # import becomes an unresolved type and the run drowns in ~235 no-unsafe-* errors that say
+      # nothing about the code. Same reason typecheck is ordered after build in the job below.
+      - name: Build
+        run: pnpm build
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Check formatting
+        run: pnpm format:check
+
+      # Unit tests do not need the build (they alias workspace imports to source) but run here
+      # anyway so a single job covers everything that does not need Postgres.
+      - name: Unit tests with coverage
+        run: pnpm test:coverage
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 14
+
   verify:
     name: Build, typecheck, smoke
     runs-on: ubuntu-latest

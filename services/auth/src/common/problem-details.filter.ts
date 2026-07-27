@@ -38,7 +38,7 @@ import { CONFIG } from "../core/tokens";
  * nothing but a status and a trace id, so a driver message or a SQL fragment cannot escape in
  * a response. That is a disclosure control, not just tidiness.
  */
-const STATUS_BY_ERROR: ReadonlyArray<[new (...args: never[]) => DomainError, HttpStatus]> = [
+const STATUS_BY_ERROR: readonly [new (...args: never[]) => DomainError, HttpStatus][] = [
   [InvalidCredentialsError, HttpStatus.UNAUTHORIZED],
   [InvalidAccessTokenError, HttpStatus.UNAUTHORIZED],
   [CrossTenantTokenError, HttpStatus.UNAUTHORIZED],
@@ -174,7 +174,7 @@ function httpDetail(exception: HttpException, path: string): string {
   const body = exception.getResponse();
   if (typeof body === "string") return body;
   if (typeof body === "object" && body !== null && "message" in body) {
-    const message = (body as { message: unknown }).message;
+    const { message } = body;
     if (typeof message === "string") return message;
     if (Array.isArray(message)) return message.filter((m) => typeof m === "string").join("; ");
   }

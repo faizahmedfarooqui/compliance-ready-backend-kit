@@ -206,7 +206,7 @@ export async function verifyNestedToken(
       requiredClaims: ["sub", "tid", "roles", "permissions", "iss", "aud", "exp", "iat"],
       clockTolerance: policy.clockToleranceSeconds ?? 0,
     });
-    return payload as Record<string, unknown>;
+    return payload;
   } catch {
     throw new TokenVerificationError("signature or claims invalid");
   }

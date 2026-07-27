@@ -19,11 +19,11 @@ import { map, type Observable } from "rxjs";
  * rather than `boolean`.
  */
 @Injectable()
-export class ResponseEnvelopeInterceptor<T> implements NestInterceptor<T, SuccessEnvelope<unknown>> {
-  intercept(
-    context: ExecutionContext,
-    next: CallHandler<T>,
-  ): Observable<SuccessEnvelope<unknown>> {
+export class ResponseEnvelopeInterceptor<T> implements NestInterceptor<
+  T,
+  SuccessEnvelope<unknown>
+> {
+  intercept(context: ExecutionContext, next: CallHandler<T>): Observable<SuccessEnvelope<unknown>> {
     return next.handle().pipe(
       map((payload) => {
         if (hasMeta(payload)) {

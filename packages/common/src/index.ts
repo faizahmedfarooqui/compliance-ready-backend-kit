@@ -203,7 +203,11 @@ export class DomainError extends Error {
 
 export class TenantNotFoundError extends DomainError {
   constructor(tenant: string) {
-    super("Unknown or inactive tenant", `Unknown or inactive tenant: ${tenant}`, "TENANT_NOT_FOUND");
+    super(
+      "Unknown or inactive tenant",
+      `Unknown or inactive tenant: ${tenant}`,
+      "TENANT_NOT_FOUND",
+    );
   }
 }
 
