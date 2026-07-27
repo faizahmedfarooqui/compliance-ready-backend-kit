@@ -14,21 +14,41 @@ controls list, not a feature list.
 
 ## Control mapping
 
-| Capability | HIPAA (45 CFR) | PCI-DSS v4.0.1 | SOC 2 (TSC) |
-| --- | --- | --- | --- |
-| Append-only audit logging | 164.312(b); 164.308(a)(1)(ii)(D) | Req 10 (10.2, 10.3.2) | CC7.2 |
-| Encryption at rest | 164.312(a)(2)(iv) | Req 3 (3.5, 3.5.1) | CC6.1 |
-| Encryption in transit (TLS) | 164.312(e)(1); 164.312(e)(2)(ii) | Req 4 (4.2.1) | CC6.7 |
-| Secrets management (KMS envelope encryption) | 164.312(a)(2)(iv) | Req 3 (3.6, 3.7) | CC6.1 |
-| Authentication (MFA / passkeys / WebAuthn) | 164.312(d) | Req 8 (8.4, 8.5) | CC6.1 |
-| Password storage (Argon2id KDF) | 164.312(d) | Req 8 (8.3.2) | CC6.1 |
-| Access-token confidentiality (nested JWT: signed, then encrypted) | 164.308(a)(1)(ii)(B) | Req 6 (6.2.4); Req 12 (12.3.3) | CC6.1 |
-| RBAC / access control | 164.312(a)(1); 164.312(a)(2)(i); 164.308(a)(4) | Req 7 | CC6.3 |
-| Multi-tenant isolation (database-per-tenant) | 164.312(a)(1) | Req 7 | CC6.1 |
-| Rate limiting / DoS protection | (none, see notes) | Req 6 (6.4.2); Req 8 (8.3.4) | CC6.6 |
-| Input validation | 164.312(c)(1) | Req 6 (6.2.4) | CC8.1 |
-| Structured logging + monitoring (OpenTelemetry) | 164.312(b); 164.308(a)(1)(ii)(D) | Req 10 | CC7.2 |
-| Vulnerability / dependency management | 164.308(a)(8); 164.308(a)(5)(ii)(B) | Req 6 (6.3.1-6.3.3); Req 11 (11.3) | CC7.1 |
+**Read the Status column before anything else.** This table maps capabilities to controls; it
+does not assert that this repository implements all of them. Six of the thirteen rows are **not
+implemented yet**, and an earlier version of this file listed them with no status column at all,
+which read as a claim. Treat a row without "Implemented" as a control you still have to provide
+some other way.
+
+| Capability | Status | HIPAA (45 CFR) | PCI-DSS v4.0.1 | SOC 2 (TSC) |
+| --- | --- | --- | --- | --- |
+| Multi-tenant isolation (database-per-tenant) | **Implemented** | 164.312(a)(1) | Req 7 | CC6.1 |
+| RBAC / access control | **Implemented** | 164.312(a)(1); 164.312(a)(2)(i); 164.308(a)(4) | Req 7 | CC6.3 |
+| Password storage (Argon2id KDF) | **Implemented** | 164.312(d) | Req 8 (8.3.2) | CC6.1 |
+| Access-token confidentiality (nested JWT: signed, then encrypted) | **Implemented** | 164.308(a)(1)(ii)(B) | Req 6 (6.2.4); Req 12 (12.3.3) | CC6.1 |
+| Input validation | **Implemented** | 164.312(c)(1) | Req 6 (6.2.4) | CC8.1 |
+| Vulnerability / dependency management | Partial | 164.308(a)(8); 164.308(a)(5)(ii)(B) | Req 6 (6.3.1-6.3.3); Req 11 (11.3) | CC7.1 |
+| Structured logging + monitoring (OpenTelemetry) | Partial | 164.312(b); 164.308(a)(1)(ii)(D) | Req 10 | CC7.2 |
+| Append-only audit logging | **Not implemented** | 164.312(b); 164.308(a)(1)(ii)(D) | Req 10 (10.2, 10.3.2) | CC7.2 |
+| Authentication (MFA / passkeys / WebAuthn) | **Not implemented** | 164.312(d) | Req 8 (8.4, 8.5) | CC6.1 |
+| Secrets management (KMS envelope encryption) | **Not implemented** | 164.312(a)(2)(iv) | Req 3 (3.6, 3.7) | CC6.1 |
+| Encryption at rest | **Not implemented** | 164.312(a)(2)(iv) | Req 3 (3.5, 3.5.1) | CC6.1 |
+| Encryption in transit (TLS) | **Not implemented here** | 164.312(e)(1); 164.312(e)(2)(ii) | Req 4 (4.2.1) | CC6.7 |
+| Rate limiting / DoS protection | **Not implemented** | (none, see notes) | Req 6 (6.4.2); Req 8 (8.3.4) | CC6.6 |
+
+### What the statuses mean
+
+- **Implemented** — the control is realised in this repository and exercised by the automated
+  tests. You still own the organisational half of it.
+- **Partial** — some of it exists. Dependency management has a committed lockfile and a CI gate
+  but no CodeQL, no SBOM and no vulnerability scanner. Logging is structured through the
+  framework logger and carries a trace id on every error, but there is no OpenTelemetry export,
+  no trace propagation and no retention policy.
+- **Not implemented** — the row exists because the control is in scope for the kit's roadmap, not
+  because the code provides it. Do not cite these rows as evidence of anything.
+- **Not implemented here** — TLS is a real and mandatory control, but this kit terminates plain
+  HTTP and assumes a load balancer or service mesh in front. That is a legitimate architecture,
+  and it means the control is satisfied outside this repository or not at all.
 
 ## Notes on the mappings
 
