@@ -72,12 +72,18 @@ pnpm build
 Before opening a pull request, run what CI runs:
 
 ```bash
+pnpm build              # MUST come first, see below
 pnpm typecheck          # must pass clean, strict mode, no warnings suppressed
-pnpm build
 pnpm db:tenant-ddl      # must produce no diff, see "Changing a database schema"
 pnpm start:auth &       # then, in another shell:
 pnpm smoke              # all checks must pass
 ```
+
+`pnpm build` has to run before `pnpm typecheck`, and the order is not cosmetic. Workspace
+packages resolve each other through their `package.json` `"main"`/`"types"`, which point into
+`dist/`, and `dist/` is gitignored. On a fresh clone nothing has been emitted yet, so
+typechecking first fails with `Cannot find module '@compliance-kit/common'` in every package
+that imports a sibling. Building emits the declaration files typecheck then resolves against.
 
 `.nvmrc` is the single source of truth for the Node version: CI reads it via
 `actions/setup-node`'s `node-version-file`, so bumping the Node version is a one-line

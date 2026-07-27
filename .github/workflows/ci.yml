@@ -77,11 +77,16 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Typecheck
-        run: pnpm typecheck
-
+      # Build BEFORE typecheck, not after. The workspace packages resolve each other through
+      # their package.json "main"/"types", which point into dist/, and dist/ is gitignored. On a
+      # fresh clone nothing has been emitted yet, so typechecking first fails with
+      # "Cannot find module '@compliance-kit/common'" in every package that imports a sibling.
+      # Building emits the declaration files that typecheck then resolves against.
       - name: Build
         run: pnpm build
+
+      - name: Typecheck
+        run: pnpm typecheck
 
       - name: Apply master schema
         run: pnpm db:migrate
