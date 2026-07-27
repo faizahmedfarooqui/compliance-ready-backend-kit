@@ -1,0 +1,29 @@
+{
+  "name": "@compliance-kit/db",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "pnpm run prisma:generate && tsc -p tsconfig.json",
+    "postinstall": "pnpm run prisma:generate",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prisma:generate": "prisma generate --config prisma.master.config.ts && prisma generate --config prisma.tenant.config.ts",
+    "master:migrate": "prisma migrate deploy --config prisma.master.config.ts",
+    "master:migrate:dev": "prisma migrate dev --config prisma.master.config.ts",
+    "tenant:ddl": "prisma migrate diff --config prisma.tenant.config.ts --from-empty --to-schema=prisma/tenant/schema.prisma --script --output=sql/tenant-schema.sql",
+    "seed:admin": "node dist/seed/seed-tenant-admin.js"
+  },
+  "dependencies": {
+    "@compliance-kit/common": "workspace:*",
+    "@compliance-kit/crypto": "workspace:*",
+    "@prisma/adapter-pg": "^7.9.0",
+    "@prisma/client": "^7.9.0",
+    "dotenv": "^17.4.2",
+    "pg": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.20.0",
+    "prisma": "^7.9.0"
+  }
+}

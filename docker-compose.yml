@@ -1,0 +1,37 @@
+# Local development dependencies only. Not a production topology.
+#
+# Host ports deliberately avoid the defaults (5432 / 6379): a compliance kit is most
+# often evaluated on a machine that already runs another Postgres or Redis, and a port
+# collision on first `docker compose up` is a bad first impression. Override with
+# POSTGRES_PORT / REDIS_PORT if these clash too.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      # The master (control-plane) database. Per-tenant databases are created at
+      # runtime on this same cluster by the ConnectionManager.
+      POSTGRES_DB: master
+    ports:
+      - "${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d master"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-56379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref; a stale CI result on an old commit is noise.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Non-secret local-equivalent values. CI runs against a throwaway service container, so
+  # these are deliberately not secrets and must never be reused anywhere real. Ports match
+  # docker-compose.yml, which avoids the defaults so a developer's own Postgres is not hit.
+  MASTER_DATABASE_URL: postgres://postgres:postgres@localhost:55432/master
+  TENANT_CLUSTER_URL: postgres://postgres:postgres@localhost:55432
+  REDIS_URL: redis://localhost:56379
+  JWT_ISSUER: compliance-ready-backend-kit
+  JWT_AUDIENCE: compliance-kit-api
+  # base64url-encoded 256-bit keys. CI-only throwaways, committed on purpose so the run is
+  # reproducible, and therefore public. They must differ from each other (config enforces it).
+  JWT_SIGNING_KEY: ci0only0000000000000000000000000000000000AA
+  JWT_ENCRYPTION_KEY: ci0only0000000000000000000000000000000000BB
+  PORT: "3011"
+
+jobs:
+  verify:
+    name: Build, typecheck, smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: master
+        ports:
+          - 55432:5432
+        # The smoke test provisions databases immediately, so the job must not start
+        # until Postgres is genuinely accepting connections.
+        options: >-
+          --health-cmd "pg_isready -U postgres -d master"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 56379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      # .nvmrc is the single source of truth for the Node version, so CI and a developer's
+      # `nvm use` cannot drift. It tracks the current Node LTS line.
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Apply master schema
+        run: pnpm db:migrate
+
+      # Fails the build if the committed tenant DDL no longer matches the tenant schema.
+      # That file is applied to every new tenant database, so drift means new tenants get a
+      # schema nobody reviewed.
+      - name: Check generated tenant DDL is current
+        run: |
+          pnpm db:tenant-ddl
+          if ! git diff --exit-code -- packages/db/sql/tenant-schema.sql; then
+            echo "::error::packages/db/sql/tenant-schema.sql is stale."
+            echo "Run 'pnpm db:tenant-ddl' and commit the result."
+            exit 1
+          fi
+
+      # Readiness is polled from the health endpoint rather than grepped out of the log. A log
+      # line says a message was printed; a 200 from /api/health says the server is actually
+      # accepting connections, which is the thing the next step depends on.
+      - name: Start auth-service
+        run: |
+          pnpm start:auth > /tmp/auth.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS "http://localhost:${PORT}/api/health" > /tmp/health.json 2>/dev/null; then
+              echo "auth-service ready: $(cat /tmp/health.json)"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::auth-service did not become ready"
+          cat /tmp/auth.log
+          exit 1
+
+      - name: Smoke test
+        run: pnpm smoke
+
+      - name: Service log
+        if: always()
+        run: cat /tmp/auth.log || true

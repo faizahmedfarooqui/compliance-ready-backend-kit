@@ -1,0 +1,18 @@
+{
+  "name": "@compliance-kit/crypto",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "argon2": "^0.45.1",
+    "jose": "^6.2.4"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3"
+  }
+}

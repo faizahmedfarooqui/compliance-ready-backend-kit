@@ -1,0 +1,31 @@
+node_modules/
+dist/
+build/
+coverage/
+*.log
+*.tsbuildinfo
+
+# Environment: never commit real secrets. Only .env.example is tracked.
+.env
+.env.*
+!.env.example
+
+# Generated Prisma clients. Rebuilt by `prisma generate`, which runs on postinstall and
+# as part of `pnpm build`, so a fresh clone does not need them committed.
+# NOTE: packages/db/sql/tenant-schema.sql is generated too but IS tracked on purpose:
+# it is applied to every new tenant database at runtime, and it is the artefact a
+# reviewer reads to see what a tenant database actually contains.
+packages/db/src/generated/
+
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Claude Code: publish the project instructions (.claude/CLAUDE.md) and skills, but keep
+# the local working memory (personal context) and machine-local settings out of the repo.
+.claude/memory/
+.claude/settings.local.json
+
+# Local working board (status + next steps), not for the public repo.
+plan.md

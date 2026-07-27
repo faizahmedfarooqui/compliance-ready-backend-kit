@@ -1,0 +1,60 @@
+// MASTER (control-plane) schema. Holds the tenant registry and global config.
+// Contains NO tenant business data. One master database per deployment.
+//
+// This schema is migrated normally (`pnpm --filter @compliance-kit/db master:migrate`).
+// The per-tenant data plane lives in ../tenant/schema.prisma and is applied to each
+// tenant's own database at provisioning time.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../../src/generated/master"
+  // Prisma 7 emits TypeScript that our own tsc compiles. The project is CommonJS with
+  // classic node resolution, so ask for CJS and extensionless imports.
+  runtime                = "nodejs"
+  moduleFormat           = "cjs"
+  generatedFileExtension = "ts"
+  importFileExtension    = ""
+}
+
+// Prisma 7 moved datasource URLs out of the schema; MASTER_DATABASE_URL is supplied to
+// the CLI by prisma.master.config.ts, and to the client by the pg driver adapter.
+datasource db {
+  provider = "postgresql"
+}
+
+enum TenantStatus {
+  provisioning
+  active
+  suspended
+
+  @@map("tenant_status")
+}
+
+/// A customer/company. One row here == one dedicated database on the tenant cluster.
+model Tenant {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  slug String @unique
+  name String
+
+  /// The dedicated database for this tenant, on the tenant cluster.
+  databaseName String @unique @map("database_name")
+
+  /// `provisioning` until the schema is applied; the completion marker for a
+  /// provisioning run that cannot be wrapped in a transaction (CREATE DATABASE).
+  status TenantStatus @default(provisioning)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("tenants")
+}
+
+/// Deployment-wide configuration that is not tenant-specific.
+model GlobalConfig {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("global_config")
+}

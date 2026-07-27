@@ -1,0 +1,35 @@
+{
+  "name": "@faizahmed/compliance-ready-backend-kit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "An auditor-defensible NestJS + Postgres backend baseline: database-per-tenant isolation, RBAC, and controls mapped to HIPAA / PCI-DSS / SOC 2.",
+  "license": "MIT",
+  "author": "Faiz Ahmed Farooqui <faizahmed.in@gmail.com>",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "dev:auth": "pnpm --filter @compliance-kit/auth-service start:dev",
+    "start:auth": "pnpm --filter @compliance-kit/auth-service start",
+    "stop:auth": "./scripts/stop-auth.sh",
+    "restart:auth": "./scripts/stop-auth.sh && pnpm start:auth",
+    "db:migrate": "pnpm --filter @compliance-kit/db master:migrate",
+    "db:migrate:dev": "pnpm --filter @compliance-kit/db master:migrate:dev",
+    "db:generate": "pnpm --filter @compliance-kit/db prisma:generate",
+    "db:tenant-ddl": "pnpm --filter @compliance-kit/db tenant:ddl",
+    "db:seed:admin": "node packages/db/dist/seed/seed-tenant-admin.js",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "infra:reset": "docker compose down -v && docker compose up -d",
+    "smoke": "./scripts/smoke-test.sh",
+    "clean:test-tenants": "./scripts/clean-test-tenants.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "jose": "^6.2.4",
+    "typescript": "^6.0.3"
+  }
+}

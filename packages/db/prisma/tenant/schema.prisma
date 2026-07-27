@@ -1,0 +1,92 @@
+// TENANT (data-plane) schema. This is applied to EACH tenant's dedicated database.
+// Because every tenant has a physically separate database, no row here is ever shared
+// across tenants. That separation IS the isolation boundary, enforced by Postgres
+// rather than by a WHERE clause the application has to remember.
+//
+// Note there is no connection URL anywhere in this file. Prisma 7 moved datasource URLs
+// out of the schema and into prisma.config.ts, and a tenant schema has no single database
+// to point at in the first place: the tenant database is chosen per request by
+// ConnectionManager, which hands PrismaClient a pg Pool through the driver adapter.
+// See src/connection-manager.ts.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../../src/generated/tenant"
+  // See ../master/schema.prisma for why these four are set.
+  runtime                = "nodejs"
+  moduleFormat           = "cjs"
+  generatedFileExtension = "ts"
+  importFileExtension    = ""
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserStatus {
+  active
+  disabled
+
+  @@map("user_status")
+}
+
+model User {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  email        String     @unique
+  passwordHash String     @map("password_hash")
+  status       UserStatus @default(active)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  roles UserRole[]
+
+  @@map("users")
+}
+
+model Role {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  name        String  @unique
+  description String?
+
+  permissions RolePermission[]
+  users       UserRole[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  /// Stable machine key, e.g. "users:read". This is what @RequirePermissions matches.
+  key         String  @unique
+  description String?
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  userId String @map("user_id") @db.Uuid
+  roleId String @map("role_id") @db.Uuid
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}

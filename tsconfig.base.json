@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    // "node20" rather than "commonjs" + the legacy "node" resolution. Legacy node10
+    // resolution is deprecated in TypeScript 6 and removed in 7, and node20 matches the
+    // Node LTS line in .nvmrc. Output is still CommonJS, because no package here declares
+    // "type": "module", so `node dist/main.js` keeps working unchanged.
+    "module": "node20",
+    "lib": ["ES2022"],
+    "declaration": true,
+    "strict": true,
+    "strictNullChecks": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "resolveJsonModule": true,
+    "sourceMap": true
+  }
+}

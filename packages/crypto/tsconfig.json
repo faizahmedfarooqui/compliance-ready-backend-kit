@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    // Declared explicitly: this package uses Node globals (Buffer, TextEncoder) directly,
+    // so the dependency on Node's types is real and worth stating rather than inheriting.
+    "types": ["node"]
+  },
+  "include": ["src"]
+}
