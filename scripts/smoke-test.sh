@@ -75,6 +75,23 @@ token_claims() {
   node "$REPO_ROOT/scripts/decode-token.mjs" "$1" | jq '.claims'
 }
 
+# The forged-token fixtures below need the real keys. Take them from the environment first and
+# fall back to .env, which is the same precedence the service itself uses.
+#
+# Do NOT read .env unconditionally: CI has no .env at all (the keys come from the workflow's
+# `env:` block), so `KEY=$(grep ... .env)` aborts the whole script under `set -e`. That is
+# exactly how this failed on its first run against GitHub Actions.
+key_from_env_or_file() {
+  local name="$1"
+  if [ -n "${!name:-}" ]; then
+    printf '%s' "${!name}"
+    return 0
+  fi
+  if [ -f "$REPO_ROOT/.env" ]; then
+    grep -h "^$name=" "$REPO_ROOT/.env" | head -1 | cut -d= -f2- || true
+  fi
+}
+
 seed_admin() {
   local tenant="$1" email="$2"
   SEED_ADMIN_PASSWORD="$ADMIN_PASSWORD" node "$SEED_CLI" --tenant "$tenant" --email "$email"
@@ -304,6 +321,15 @@ expect_status 401 "$status" "GET /users with a token minted for a different tena
   || fail "unexpected error body: $(cat /tmp/smoke-body)"
 
 step "13. Malformed and forged tokens are rejected"
+# The fixtures below are built with the service's real keys. If a key did not resolve, they
+# would still be built, still be rejected, and still "pass" while proving nothing. Check first.
+SIGN_KEY=$(key_from_env_or_file JWT_SIGNING_KEY)
+ENC_KEY=$(key_from_env_or_file JWT_ENCRYPTION_KEY)
+if [ "${#SIGN_KEY}" = "43" ] && [ "${#ENC_KEY}" = "43" ]; then
+  pass "resolved both signing and encryption keys, so the forgery fixtures are meaningful"
+else
+  fail "could not resolve keys (signing=${#SIGN_KEY} chars, encryption=${#ENC_KEY} chars). Set JWT_SIGNING_KEY and JWT_ENCRYPTION_KEY, or provide a .env"
+fi
 # A bare JWS must not be accepted where a JWE is expected. This is the RFC 8725 s2.3
 # signature-stripping shape: if verification decrypted without then verifying, or accepted
 # an unencrypted token, this would pass.
@@ -316,7 +342,7 @@ import("jose").then(async ({SignJWT})=>{
     .setProtectedHeader({alg:"HS256",typ:"crbk-at+jwt"}).setIssuer(iss).setAudience(aud)
     .setIssuedAt().setExpirationTime("15m").sign(new Uint8Array(Buffer.from(sk,"base64url")));
   process.stdout.write(t);
-});' "$(grep '^JWT_SIGNING_KEY=' "$REPO_ROOT/.env" | cut -d= -f2)" \
+});' "$(key_from_env_or_file JWT_SIGNING_KEY)" \
    compliance-ready-backend-kit compliance-kit-api "$TENANT_A_ID" 2>/dev/null)
 [ "$(printf '%s' "$BARE_JWS" | awk -F. '{print NF}')" = "3" ] \
   && pass "negative-test fixture is a real signed JWS (test is not vacuous)" \
@@ -352,7 +378,6 @@ tamper_segment() {
 # outer header, so it decrypts perfectly. Only its INNER signature is forged. An
 # implementation that decrypted and trusted the result would accept it and hand the caller
 # full admin permissions. Verifying the inner JWS separately is the only thing that catches it.
-ENC_KEY=$(grep '^JWT_ENCRYPTION_KEY=' "$REPO_ROOT/.env" | cut -d= -f2)
 FORGED=$(node -e '
 const [,ek,iss,aud,tid]=process.argv;
 import("jose").then(async ({SignJWT,CompactEncrypt})=>{
