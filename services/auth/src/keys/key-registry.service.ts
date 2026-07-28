@@ -39,8 +39,9 @@ import { CONFIG, CONNECTION_MANAGER } from "../core/tokens";
  * JWKS. That bounds the amplification a forged kid can cause to one query per cooldown window,
  * rather than one per request.
  *
- * The refresh is deliberately NOT visible to the resolvers. It runs from the guard path before
- * verification begins, so the resolver itself stays synchronous.
+ * The refresh is deliberately NOT visible to the resolvers. `TokenService.verify` calls
+ * `refreshIfStale()` itself, between a failed verification and its one retry, so the resolvers handed
+ * to jose never await anything and stay synchronous.
  */
 
 /** At most one reload per window, however many unknown kids arrive. */
@@ -200,8 +201,13 @@ export class KeyRegistryService implements OnModuleInit, OnModuleDestroy {
   /**
    * Reload if a kid was not recognised, at most once per cooldown window.
    *
-   * Called from the guard BEFORE verification starts, never from inside a resolver, so the resolvers
-   * stay synchronous. Concurrent callers share one in-flight reload rather than stampeding.
+   * Called by `TokenService.verify` after a verification failure and before its single retry. The
+   * important part is not *when* but *where from*: never inside a resolver, because a resolver that
+   * awaited would make an unverified `kid` able to trigger a query. Concurrent callers share one
+   * in-flight reload rather than stampeding.
+   *
+   * Note that a failure is not the only thing that triggers a reload. It cannot be, because a stale
+   * snapshot whose active key is still valid produces no failures at all; see REFRESH_INTERVAL_MS.
    */
   async refreshIfStale(): Promise<void> {
     if (this.inFlight) return this.inFlight;

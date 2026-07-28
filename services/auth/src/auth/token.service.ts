@@ -46,8 +46,14 @@ export class TokenService {
    * On failure this retries once after asking the registry to refresh. That covers the legitimate
    * case where an operator has just rotated or revoked a key and this instance's snapshot predates
    * it. The refresh is cooldown-limited inside the registry, so a flood of forged kids cannot turn
-   * this into one database query per request, and it happens BEFORE verification rather than inside
-   * a resolver, so the resolvers stay synchronous.
+   * this into one database query per request, and it happens here rather than inside a resolver,
+   * which is what keeps the resolvers synchronous.
+   *
+   * Both attempts rethrow anything that is not a TokenVerificationError. Only a verification failure
+   * is the caller's fault; a TypeError or an unexpected jose exception is ours, and collapsing one of
+   * those into a 401 would hide a server bug behind a status code that gets no attention. The retry
+   * path needs this as much as the first attempt does, because the refresh in between means the
+   * second call runs against a different snapshot and can therefore fail in ways the first did not.
    */
   async verify(token: string): Promise<AccessTokenClaims> {
     let payload: Record<string, unknown>;
@@ -58,7 +64,8 @@ export class TokenService {
       await this.keys.refreshIfStale();
       try {
         payload = await this.verifyOnce(token);
-      } catch {
+      } catch (second) {
+        if (!(second instanceof TokenVerificationError)) throw second;
         throw new InvalidAccessTokenError();
       }
     }
