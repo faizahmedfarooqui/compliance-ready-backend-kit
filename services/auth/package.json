@@ -25,7 +25,7 @@
   "devDependencies": {
     "@nestjs/cli": "^11.0.24",
     "@nestjs/schematics": "^11.1.0",
-    "@types/node": "^24.13.3",
+    "@types/node": "^26.1.2",
     "typescript": "^6.0.3"
   }
 }
