@@ -14,7 +14,9 @@ async function bootstrap(): Promise<void> {
 
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter());
 
-  app.setGlobalPrefix("api");
+  // RFC 8615 reserves /.well-known/ at the root of an origin, so the JWKS route is excluded from
+  // the prefix. A well-known URI nested under /api is not a well-known URI.
+  app.setGlobalPrefix("api", { exclude: [".well-known/jwks.json"] });
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

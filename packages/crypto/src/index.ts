@@ -1,3 +1,13 @@
+/**
+ * The JOSE types that leak through this package's public API.
+ *
+ * Re-exported so no other package has to depend on `jose` directly. CLAUDE.md makes this package the
+ * only home for anything cryptographic, and a consumer importing `jose` for a type would quietly
+ * break that: it would gain the ability to reach for `SignJWT` too, and there would then be two
+ * places that know the token format.
+ */
+export type { CryptoKey, JWK } from "jose";
+
 export {
   ARGON2_OPTIONS,
   hashPassword,
@@ -29,6 +39,12 @@ export {
   TokenVerificationError,
   issueNestedToken,
   verifyNestedToken,
-  type TokenKeys,
+  type EncryptionKeyResolver,
+  type EncryptionMaterial,
+  type SigningKeyResolver,
+  type SigningMaterial,
+  type TokenMaterial,
   type TokenPolicy,
+  type TokenResolvers,
+  type VerifiedToken,
 } from "./tokens";

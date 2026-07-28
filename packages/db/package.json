@@ -12,7 +12,8 @@
     "master:migrate": "prisma migrate deploy --config prisma.master.config.ts",
     "master:migrate:dev": "prisma migrate dev --config prisma.master.config.ts",
     "tenant:ddl": "prisma migrate diff --config prisma.tenant.config.ts --from-empty --to-schema=prisma/tenant/schema.prisma --script --output=sql/tenant-schema.sql",
-    "seed:admin": "node dist/seed/seed-tenant-admin.js"
+    "seed:admin": "node dist/seed/seed-tenant-admin.js",
+    "keys": "node dist/keys/manage-keys.js"
   },
   "dependencies": {
     "@compliance-kit/common": "workspace:*",
@@ -20,6 +21,7 @@
     "@prisma/adapter-pg": "^7.9.0",
     "@prisma/client": "^7.9.0",
     "dotenv": "^17.4.2",
+    "jose": "^6.2.4",
     "pg": "^8.22.0"
   },
   "devDependencies": {

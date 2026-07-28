@@ -8,8 +8,7 @@ import { loadConfig } from "./index";
  * length nothing downstream will.
  */
 
-const KEY_A = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const KEY_B = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+const KEK = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 function validEnv(overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
   return {
@@ -17,8 +16,7 @@ function validEnv(overrides: Record<string, string | undefined> = {}): NodeJS.Pr
     TENANT_CLUSTER_URL: "postgres://postgres:postgres@localhost:55432",
     JWT_ISSUER: "test-issuer",
     JWT_AUDIENCE: "test-audience",
-    JWT_SIGNING_KEY: KEY_A,
-    JWT_ENCRYPTION_KEY: KEY_B,
+    KEY_ENCRYPTION_KEY: KEK,
     REDIS_URL: "redis://localhost:56379",
     ...overrides,
   };
@@ -53,8 +51,7 @@ describe("loadConfig", () => {
       ["TENANT_CLUSTER_URL", undefined],
       ["JWT_ISSUER", undefined],
       ["JWT_AUDIENCE", undefined],
-      ["JWT_SIGNING_KEY", undefined],
-      ["JWT_ENCRYPTION_KEY", undefined],
+      ["KEY_ENCRYPTION_KEY", undefined],
       ["REDIS_URL", undefined],
     ])("a missing %s", (name) => {
       expect(() => loadConfig(validEnv({ [name]: undefined }))).toThrow(/Invalid configuration/);
@@ -66,16 +63,10 @@ describe("loadConfig", () => {
       );
     });
 
-    // A "minimum 16 characters" check would accept a 128-bit secret. RFC 7518 s3.2 requires a key
-    // at least the size of the hash output for HS256, and A256KW needs exactly 256 bits.
-    it("a signing key shorter than 256 bits", () => {
-      expect(() => loadConfig(validEnv({ JWT_SIGNING_KEY: "tooshort" }))).toThrow(
-        /base64url-encoded 256-bit key/,
-      );
-    });
-
-    it("an encryption key shorter than 256 bits", () => {
-      expect(() => loadConfig(validEnv({ JWT_ENCRYPTION_KEY: "AAAA" }))).toThrow(
+    // A "minimum 16 characters" check would accept a 128-bit secret. AES-256-GCM, which the local
+    // key provider wraps with, needs exactly 256 bits, and nothing downstream re-checks.
+    it("a key-encrypting key shorter than 256 bits", () => {
+      expect(() => loadConfig(validEnv({ KEY_ENCRYPTION_KEY: "tooshort" }))).toThrow(
         /base64url-encoded 256-bit key/,
       );
     });
@@ -83,17 +74,9 @@ describe("loadConfig", () => {
     it("a key containing characters that are not base64url", () => {
       // Right length, wrong alphabet: '+' and '/' are base64, not base64url.
       const notBase64Url = `${"A".repeat(41)}+/`;
-      expect(() => loadConfig(validEnv({ JWT_SIGNING_KEY: notBase64Url }))).toThrow(
+      expect(() => loadConfig(validEnv({ KEY_ENCRYPTION_KEY: notBase64Url }))).toThrow(
         /base64url-encoded 256-bit key/,
       );
-    });
-
-    // The one cross-field rule: reusing a single secret for both layers means recovering it
-    // yields the ability to forge tokens AND to decrypt them.
-    it("the same key used for signing and encryption", () => {
-      expect(() =>
-        loadConfig(validEnv({ JWT_SIGNING_KEY: KEY_A, JWT_ENCRYPTION_KEY: KEY_A })),
-      ).toThrow(/must be different keys/);
     });
 
     it("an unrecognised NODE_ENV", () => {
@@ -103,6 +86,28 @@ describe("loadConfig", () => {
     it("a non-positive port", () => {
       expect(() => loadConfig(validEnv({ PORT: "0" }))).toThrow(/Invalid configuration/);
     });
+  });
+
+  /**
+   * There used to be a cross-field rule here forbidding the signing and encryption keys from being
+   * the same value. It is gone because those keys are gone: they live in the `config_keys` registry
+   * now, generated independently by `pnpm keys:init`, so config cannot conflate them. The rule
+   * itself did not disappear, it moved to where the keys are: `assertMaterial` in
+   * packages/crypto/src/tokens.ts rejects material whose two kids match, and the database pairs
+   * purpose to algorithm with a CHECK constraint.
+   */
+  it("no longer carries the token keys at all, only the KEK that wraps them", () => {
+    const config = loadConfig(validEnv());
+    expect(config.keyEncryptionKey).toBe(KEK);
+    expect(config).not.toHaveProperty("jwtSigningKey");
+    expect(config).not.toHaveProperty("jwtEncryptionKey");
+  });
+
+  it("defaults the clock tolerance, which also sets the key-rotation overlap", () => {
+    expect(loadConfig(validEnv()).jwtClockToleranceSeconds).toBe(5);
+    expect(
+      loadConfig(validEnv({ JWT_CLOCK_TOLERANCE_SECONDS: "30" })).jwtClockToleranceSeconds,
+    ).toBe(30);
   });
 
   it("names the offending field in the error, so a bad deploy is diagnosable", () => {

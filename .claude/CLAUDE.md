@@ -79,9 +79,35 @@ When adding a headline capability to any pitch, check `COMPLIANCE.md`'s Status c
 
 ## Auth decisions (do not re-litigate)
 
-- **Access tokens are nested JWTs: signed (JWS), then encrypted (JWE).** Inner HS256; outer
-  A256KW + A256GCM with `cty: "JWT"`; two separate 256-bit keys, and config refuses to boot if
-  they match. Implemented with `jose` directly, in `packages/crypto/src/tokens.ts`.
+- **Access tokens are nested JWTs: signed (JWS), then encrypted (JWE).** Inner **ES256**, outer
+  A256KW + A256GCM with `cty: "JWT"`, and both layers name their key with a `kid`. Implemented
+  with `jose` directly, in `packages/crypto/src/tokens.ts`, which is pure: it holds no keys and
+  reads no database.
+- **Not HS256.** A symmetric inner signature means anything that can verify can also mint, so
+  handing a second service the verification key hands it the power to forge `roles` for any
+  tenant. Do not "simplify" it back.
+- **Keys live in `config_keys` in the master database, wrapped, never in config.** The only key
+  in configuration is `KEY_ENCRYPTION_KEY`, the KEK that wraps the rest, and `LocalKeyProvider`
+  behind the `KeyProvider` port is the seam a KMS/HSM/enclave adapter replaces. `pnpm keys:init`
+  bootstraps a deployment; `keys:rotate` activates a new key and retires the previous one for the
+  TTL plus clock tolerance. Lifecycle invariants are enforced by **Postgres**: a partial unique
+  index allows one `active` key per purpose, and CHECK constraints pair purpose to algorithm,
+  require a public JWK for asymmetric keys, and refuse a `revoked` row that still holds material.
+- **Key resolvers passed to `jose` MUST stay synchronous.** jose calls them with an
+  attacker-controlled `kid` before anything is verified (RFC 8725 §2.9), so an async resolver
+  would let a forged kid drive a database query or a KMS unwrap per unauthenticated request.
+  `KeyRegistryService` keeps an in-memory snapshot for exactly this reason, refreshed on a
+  cooldown-limited miss and on a 60s timer (refresh-on-miss alone silently misses a rotation,
+  because a stale-but-valid active key produces no misses at all).
+- **`verifyNestedToken` returns `{ claims, outerHeader, innerHeader }`.** The headers are a
+  product of successful verification and are deliberately not obtainable any other way: a
+  decode-without-verify helper is the RFC 8725 §2.3 mistake wearing a helpful name.
+- **Public keys are published at `/.well-known/jwks.json`**, at the origin root (RFC 8615), and
+  that route is excluded from the global `api` prefix and from the success envelope via
+  `@RawResponse()`. Wrapping a JWKS in `{ success, data }` breaks every standard consumer.
+- **Keys are deployment-wide, not per tenant.** The tenant is the `tid` claim inside the
+  ciphertext, so per-tenant keys would require knowing the tenant before verifying, and every
+  way to do that is broken (circular, leaks the tenant, or attacker-directed).
 - **No `@nestjs/jwt`, no `@nestjs/passport`, no `passport-jwt`.** They were removed and must
   not come back: `@nestjs/jwt` wraps `jsonwebtoken`, which is JWS-only and cannot produce a
   JWE, and `passport-jwt` reads the token through a *synchronous* extractor that cannot await
@@ -105,10 +131,10 @@ When adding a headline capability to any pitch, check `COMPLIANCE.md`'s Status c
 
 ## v1 scope
 
-**Auth + RBAC**, on the database-per-tenant + master-config-DB foundation. Deferred to later
-milestones (keep a visible roadmap in `README.md`): passkeys / WebAuthn, OIDC, envelope
-encryption, append-only audit log, rate limiting, OpenTelemetry, key rotation with `kid`, and
-sender-constrained tokens (mTLS / DPoP).
+**Auth + RBAC + a key registry**, on the database-per-tenant + master-config-DB foundation.
+Deferred to later milestones (keep a visible roadmap in `README.md`): passkeys / WebAuthn, OIDC,
+field-level envelope encryption, append-only audit log, rate limiting, OpenTelemetry, KMS/HSM
+`KeyProvider` adapters, and sender-constrained tokens (mTLS / DPoP).
 
 ## Conventions
 
