@@ -34,7 +34,8 @@ some other way.
 | Secrets management (KMS envelope encryption) | **Not implemented** | 164.312(a)(2)(iv) | Req 3 (3.6, 3.7) | CC6.1 |
 | Encryption at rest | **Not implemented** | 164.312(a)(2)(iv) | Req 3 (3.5, 3.5.1) | CC6.1 |
 | Encryption in transit (TLS) | **Not implemented here** | 164.312(e)(1); 164.312(e)(2)(ii) | Req 4 (4.2.1) | CC6.7 |
-| Rate limiting / DoS protection | **Not implemented** | (none, see notes) | Req 6 (6.4.2); Req 8 (8.3.4) | CC6.6 |
+| Rate limiting and login throttling (application layer) | **Not implemented** | (none, see notes) | Req 8 (8.3.4, unverified) | CC6.6 |
+| DoS / DDoS protection (network layer) | **Not implemented here** | (none, see notes) | Req 6 (6.4.2, unverified) | CC6.6 |
 
 ### What the statuses mean
 
@@ -122,7 +123,27 @@ some other way.
   resolved tenant is a separate control, and both are needed to claim Req 7 or CC6.3.
 - **Rate limiting.** No direct HIPAA technical safeguard (HIPAA handles availability via
   administrative contingency planning, 164.308(a)(7)), hence the blank. PCI 8.3.4 is the
-  auth-lockout tie; SOC 2 CC6.6 points of focus explicitly include rate limiting and DDoS.
+  auth-lockout tie, though that clause number is **unverified** here: PCI-DSS is behind
+  registration and nobody on this project has read the text.
+
+  **A correction, and the reason the row is now split in two.** An earlier version of this file
+  claimed that "SOC 2 CC6.6 points of focus explicitly include rate limiting and DDoS". That could
+  not be substantiated. In the 2017 Trust Services Criteria (including the March 2020 updates) the
+  strings "rate limit", "throttl", "denial of service" and "DDoS" do not appear at all, and CC6.6's
+  four points of focus are Restricts Access, Protects Identification and Authentication
+  Credentials, Requires Additional Authentication or Credentials, and Implements Boundary
+  Protection Systems. The 2022 revised points of focus that this document cites could not be
+  obtained to check. So the honest mapping rests on the **criterion** rather than a point of focus:
+  CC6.6 is "logical access security measures to protect against threats from sources outside its
+  system boundaries", which supports the mapping without the word "explicitly" doing work the
+  source does not.
+
+  The row is now two rows because one row conflated two controls with different honest answers.
+  Application-level rate limiting is something this repository can implement. Volumetric DoS
+  defence is not: by the time a request reaches a guard, the connection is accepted, HTTP parsed
+  and the tenant resolved, so a flood large enough to matter has already won. That belongs at L3/L4
+  in front of the service, the same framing this document already uses for TLS. Leaving them merged
+  let one row's status imply the other's.
 - **Input validation.** PCI 6.2.4 is direct (prevent injection/tampering in custom
   software). The HIPAA (164.312(c)(1) Integrity) and SOC 2 (CC8.1) ties are indirect.
 

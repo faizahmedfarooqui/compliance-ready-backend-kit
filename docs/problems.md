@@ -159,6 +159,20 @@ section of the README.
 
 No route matches that method and path.
 
+### `too-many-requests`
+
+`TOO_MANY_REQUESTS` · **429**
+
+Reserved, and **not yet emitted**: rate limiting is not implemented (see COMPLIANCE.md). The code
+and title exist in the filter so that the contract is settled before the control lands, and this
+section exists so the `type` URI is not a link to a heading that does not exist. The smoke test
+asserts every emitted code has a section here, which is why a reserved code needs one too.
+
+When it does land, the response will carry a `Retry-After` header. Two details worth stating now,
+because both are easy to get wrong: RFC 6585 §4 makes `Retry-After` on a 429 a **MAY** rather than
+a requirement, and RFC 9110 §10.2.3 defines `delay-seconds` as a non-negative **integer**, so a
+fractional or negative value is malformed. Responses with 429 also MUST NOT be cached.
+
 ### `internal-error`
 
 `INTERNAL_ERROR` · **500**

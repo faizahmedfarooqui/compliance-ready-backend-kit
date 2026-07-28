@@ -335,8 +335,13 @@ Known gaps, stated plainly because a compliance kit that hides its gaps is worse
 - **No audit log yet.** Provisioning, login, and permission changes are the events an
   assessor will ask to see, and today they are not recorded. Append-only logging is the
   next milestone.
-- **No rate limiting.** Nothing throttles `/auth/login`, so nothing satisfies PCI-DSS
-  8.3.4 or resists credential stuffing.
+- **No rate limiting or login throttling.** Nothing throttles `/auth/login`, so nothing resists
+  credential stuffing. Note that throttling is not a substitute for phishing-resistant MFA: one
+  attempt per account across ten thousand accounts never trips a per-account counter.
+- **No request or connection timeouts.** Fastify's `requestTimeout` and `connectionTimeout` both
+  default to no limit, and this kit does not override them, so a client that opens a connection and
+  dribbles a request slowly holds a socket indefinitely. That is slowloris, and it needs a value set
+  here as well as limits at the load balancer.
 - **Permissions are baked into the access token** at login. A permission revoked
   mid-session stays usable until the token expires (default 15 minutes). If your access
   review requires immediate revocation, check against the database per request.
