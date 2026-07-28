@@ -65,6 +65,38 @@ Out of scope:
 - Reports produced by running a scanner and pasting its output, with no analysis of
   whether the finding is reachable here.
 
+## Dependency advisories, and the ones we accept
+
+CI runs `pnpm audit --audit-level=high` as a **gate**, not a report, plus CodeQL, gitleaks over
+full history, and dependency review on pull requests. See
+[.github/workflows/security.yml](.github/workflows/security.yml).
+
+Two things about that gate are deliberate.
+
+**It is allowed to fail the build.** A check that cannot fail is theatre, and this is one of the
+rows COMPLIANCE.md marks as a real control. When an advisory appears, fix it or record an exception
+here. Do not lower the threshold.
+
+**Exceptions are documented, not silent.** Suppressing an advisory without saying why is
+indistinguishable from not noticing it. Every entry in `pnpm.auditConfig.ignoreGhsas` must have a
+matching entry below, with the reasoning and what would make us revisit it.
+
+### Accepted advisories
+
+| Advisory | Package | Why accepted | Revisit when |
+| --- | --- | --- | --- |
+| [GHSA-mh99-v99m-4gvg](https://github.com/advisories/GHSA-mh99-v99m-4gvg) | `brace-expansion` 1.1.16 / 2.1.2 | Denial of service via unbounded expansion. **Not in the production dependency closure** (`pnpm why --prod` returns nothing): it reaches us only through ESLint's tooling, so the exposure is a developer's own build. The fix exists only in 5.0.8, and 1.1.16 and 2.1.2 are already the newest releases on those major lines, so there is nothing to upgrade to without a breaking major bump of the consumers. | A patched 1.x or 2.x is published, or the consuming tooling moves to 5.x. |
+
+### Fixed rather than accepted
+
+For the record, because it shows the gate working: the first run flagged
+[GHSA-c96f-x56v-gq3h](https://github.com/advisories/GHSA-c96f-x56v-gq3h), an HTTP/2 denial of
+service in `find-my-way` at or below 9.6.0 — the router underneath Fastify, squarely in the
+production path. `fastify` itself allows `^9.6.0` and so would take the fix, but
+`@nestjs/platform-fastify` pins `9.6.0` exactly. Resolved with a `pnpm.overrides` entry scoped to
+the 9.x line (`"find-my-way@9": "^9.7.0"`), which leaves an unrelated 8.x consumer in the tooling
+alone. Verified by confirming both `fastify` and `@nestjs/platform-fastify` now resolve 9.7.0.
+
 ## What this project is not
 
 This kit provides technical scaffolding that supports compliance controls. It is **not** a

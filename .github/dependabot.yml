@@ -22,6 +22,20 @@ updates:
         patterns: ["eslint*", "@eslint/*", "typescript-eslint", "prettier*", "vitest", "@vitest/*"]
       types:
         patterns: ["@types/*"]
+    ignore:
+      # @types/node MUST track the Node major this kit targets, which is the current LTS (24),
+      # not npm's "latest" dist-tag. Dependabot proposed 24 -> 26 within an hour of being
+      # enabled, and CI passed it: @types/node 26 compiles this repo clean while describing
+      # APIs Node 24 does not have, so you get green typechecks for code that throws at
+      # runtime. A test cannot catch that, so it is pinned here instead. Raise the major
+      # deliberately when .nvmrc moves.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # TypeScript majors are never routine here: 7 removed the programmatic compiler API that
+      # `nest build` depends on. Upgrade by hand, after checking the toolchain still works.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+
     # Security patches should not wait for the weekly window, and Dependabot raises those
     # separately from version updates regardless of this schedule.
 
