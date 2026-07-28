@@ -50,6 +50,21 @@ Equally: **do not hide gaps.** The README's Status section exists to be honest a
 is missing. If your change reveals a new gap, add it there in the same pull request. A
 documented weakness is a feature of a compliance tool. An undocumented one is a liability.
 
+**Never name a capability the kit does not have.** This is the failure mode to watch, because it
+happens through enthusiasm rather than dishonesty. Earlier versions of this repository described
+itself as "the audit-ready NestJS baseline" and pitched "passkeys, KMS envelope encryption, and
+append-only audit logs" while none of those three existed, and the control mapping listed thirteen
+capabilities with no way to tell a shipped one from an intention.
+
+So, concretely:
+
+- [COMPLIANCE.md](./COMPLIANCE.md) has a **Status** column. Check it before writing marketing copy
+  anywhere, including the README headline, the `package.json` description, and commit messages.
+- When you implement a control, move its status in the same pull request. When you add a *row* for
+  something not built, it starts at "Not implemented".
+- Roadmap items belong in the roadmap, phrased as intentions. "The kit will support X" is fine.
+  "The kit supports X" is not, until it does.
+
 ## Getting set up
 
 Node 24 (the current LTS line, pinned in `.nvmrc`), pnpm 9, Docker.

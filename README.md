@@ -1,12 +1,19 @@
 # compliance-ready-backend-kit
 
-**The audit-ready NestJS baseline: Postgres-enforced tenant isolation, RBAC, and typed
-config, each wired to the compliance control your auditor will ask about.**
+**A NestJS + Postgres baseline built as a controls list, not a feature list: Postgres-enforced
+tenant isolation, RBAC, and encrypted access tokens, each mapped to the named HIPAA / PCI-DSS /
+SOC 2 control an assessor will ask about, and each marked implemented or not.**
 
-Most NestJS starters give you a feature list. This one gives you a **controls list**:
-every capability maps to a named control in HIPAA (45 CFR Part 164), PCI-DSS v4.0.1, or
-the AICPA Trust Services Criteria. The mapping lives in
-[COMPLIANCE.md](./COMPLIANCE.md) and is fact-checked against the primary sources.
+Most NestJS starters give you a feature list. This one gives you a **controls list**: every
+capability maps to a named control in HIPAA (45 CFR Part 164), PCI-DSS v4.0.1, or the AICPA
+Trust Services Criteria, fact-checked against the primary sources.
+
+**And it tells you which of them actually exist.** The mapping in
+[COMPLIANCE.md](./COMPLIANCE.md) carries a Status column: five controls are implemented, two are
+partial, and six are not built yet. A control mapping without that column is a marketing
+document, because the reader cannot tell a shipped control from an intention. Audit logging is
+currently in the "not built yet" list, which is why this page no longer describes the kit as
+audit-ready.
 
 > ### Read this before you rely on it
 >

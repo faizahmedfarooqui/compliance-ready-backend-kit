@@ -9,14 +9,19 @@ Project memory for Claude Code. Read this before making changes. Local working m
 ## What this is
 
 An open-source (MIT), **clean-room** compliance-ready backend kit: a NestJS + TypeScript
-monorepo that gives teams an auditor-defensible backend baseline. The differentiator vs the
-many NestJS boilerplates is that this is a **controls list, not a feature list** — every
-capability maps to a named HIPAA / PCI-DSS v4.0.1 / SOC 2 control (see `COMPLIANCE.md`).
-Goal: a **genuinely adopted OSS tool**, not a demo.
+monorepo. The differentiator vs the many NestJS boilerplates is that this is a **controls list,
+not a feature list** — every capability maps to a named HIPAA / PCI-DSS v4.0.1 / SOC 2 control
+(see `COMPLIANCE.md`), **and each is marked implemented or not**. Goal: a **genuinely adopted OSS
+tool**, not a demo.
 
-One-line pitch: *"The audit-ready NestJS baseline: passkeys, Postgres-enforced tenant
-isolation, KMS envelope encryption, and append-only audit logs, each wired to the compliance
-control your auditor will ask about."*
+One-line pitch: *"A NestJS + Postgres baseline built as a controls list, not a feature list, where
+every control is named, cited, and marked implemented or not."*
+
+**The pitch must never name a capability the kit does not have.** An earlier version of this file
+pitched "passkeys, Postgres-enforced tenant isolation, KMS envelope encryption, and append-only
+audit logs" when three of those four did not exist. Copy stating intentions as facts is how the
+overclaim rule gets broken by accident, and it propagates: every later doc and commit inherits it.
+When adding a headline capability to any pitch, check `COMPLIANCE.md`'s Status column first.
 
 ## Non-negotiable rules
 
