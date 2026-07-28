@@ -72,24 +72,7 @@ expect_status() {
 # there is no payload to read without the keys; this shells out to the same two-layer
 # verification the service performs.
 token_claims() {
-  node "$REPO_ROOT/scripts/decode-token.mjs" "$1" | jq '.claims'
-}
-
-# The forged-token fixtures below need the real keys. Take them from the environment first and
-# fall back to .env, which is the same precedence the service itself uses.
-#
-# Do NOT read .env unconditionally: CI has no .env at all (the keys come from the workflow's
-# `env:` block), so `KEY=$(grep ... .env)` aborts the whole script under `set -e`. That is
-# exactly how this failed on its first run against GitHub Actions.
-key_from_env_or_file() {
-  local name="$1"
-  if [ -n "${!name:-}" ]; then
-    printf '%s' "${!name}"
-    return 0
-  fi
-  if [ -f "$REPO_ROOT/.env" ]; then
-    grep -h "^$name=" "$REPO_ROOT/.env" | head -1 | cut -d= -f2- || true
-  fi
+  node "$REPO_ROOT/packages/db/dist/keys/decode-token.js" "$1" | jq '.claims'
 }
 
 seed_admin() {
@@ -217,19 +200,22 @@ else
   pass "no segment of the token reveals claims without the encryption key"
 fi
 
-DECODED=$(node "$REPO_ROOT/scripts/decode-token.mjs" "$ADMIN_TOKEN")
+DECODED=$(node "$REPO_ROOT/packages/db/dist/keys/decode-token.js" "$ADMIN_TOKEN")
 [ "$(printf '%s' "$DECODED" | jq -r '.outerHeader.cty')" = "JWT" ] \
   && pass "outer JWE header carries cty=JWT (RFC 7519 s5.2)" \
   || fail "outer cty wrong: $DECODED"
 [ "$(printf '%s' "$DECODED" | jq -r '.outerHeader.alg + "/" + .outerHeader.enc')" = "A256KW/A256GCM" ] \
   && pass "outer JWE is A256KW + A256GCM" \
   || fail "unexpected JWE algorithms: $DECODED"
-[ "$(printf '%s' "$DECODED" | jq -r '.innerSegments')" = "3" ] \
-  && pass "plaintext of the JWE is itself a 3-segment JWS" \
-  || fail "inner token is not a JWS: $DECODED"
-[ "$(printf '%s' "$DECODED" | jq -r '.innerHeader.typ')" = "crbk-at+jwt" ] \
-  && pass "inner JWS is explicitly typed, and not the RFC 9068 at+jwt it does not conform to" \
-  || fail "unexpected inner typ: $DECODED"
+[ "$(printf '%s' "$DECODED" | jq -r '.activeSigningKid')" != "null" ] \
+  && pass "verified against the active signing key from the registry" \
+  || fail "no active signing kid reported: $DECODED"
+[ "$(printf '%s' "$DECODED" | jq -r '.outerHeader.typ')" = "crbk-at+jwt" ] \
+  && pass "explicitly typed crbk-at+jwt, not the RFC 9068 at+jwt it does not conform to" \
+  || fail "unexpected typ: $DECODED"
+[ "$(printf '%s' "$DECODED" | jq -r '.outerHeader.kid')" != "null" ] \
+  && pass "outer header names its key with a kid, so rotation is possible" \
+  || fail "no kid in the outer header: $DECODED"
 
 step "6. The verified claims carry tenant id, user id, roles and permissions"
 CLAIMS=$(printf '%s' "$DECODED" | jq '.claims')
@@ -321,47 +307,21 @@ expect_status 401 "$status" "GET /users with a token minted for a different tena
   || fail "unexpected error body: $(cat /tmp/smoke-body)"
 
 step "13. Malformed and forged tokens are rejected"
-# The fixtures below are built with the service's real keys. If a key did not resolve, they
-# would still be built, still be rejected, and still "pass" while proving nothing. Check first.
-SIGN_KEY=$(key_from_env_or_file JWT_SIGNING_KEY)
-ENC_KEY=$(key_from_env_or_file JWT_ENCRYPTION_KEY)
-if [ "${#SIGN_KEY}" = "43" ] && [ "${#ENC_KEY}" = "43" ]; then
-  pass "resolved both signing and encryption keys, so the forgery fixtures are meaningful"
-else
-  fail "could not resolve keys (signing=${#SIGN_KEY} chars, encryption=${#ENC_KEY} chars). Set JWT_SIGNING_KEY and JWT_ENCRYPTION_KEY, or provide a .env"
-fi
-# A bare JWS must not be accepted where a JWE is expected. This is the RFC 8725 s2.3
-# signature-stripping shape: if verification decrypted without then verifying, or accepted
-# an unencrypted token, this would pass.
-# Signed with the REAL signing key and carrying the REAL tenant id, so the only thing
-# wrong with it is the missing encryption layer. That is what makes this a real test.
-BARE_JWS=$(node -e '
-const [,sk,iss,aud,tid]=process.argv;
-import("jose").then(async ({SignJWT})=>{
-  const t=await new SignJWT({sub:"00000000-0000-4000-8000-000000000000",tid,roles:["tenant-admin"],permissions:["users:read"]})
-    .setProtectedHeader({alg:"HS256",typ:"crbk-at+jwt"}).setIssuer(iss).setAudience(aud)
-    .setIssuedAt().setExpirationTime("15m").sign(new Uint8Array(Buffer.from(sk,"base64url")));
-  process.stdout.write(t);
-});' "$(key_from_env_or_file JWT_SIGNING_KEY)" \
-   compliance-ready-backend-kit compliance-kit-api "$TENANT_A_ID" 2>/dev/null)
-[ "$(printf '%s' "$BARE_JWS" | awk -F. '{print NF}')" = "3" ] \
-  && pass "negative-test fixture is a real signed JWS (test is not vacuous)" \
-  || fail "could not build the bare-JWS fixture: $BARE_JWS"
-status=$(req GET /users "" -H "x-tenant-id: $TENANT_A" -H "authorization: Bearer $BARE_JWS")
-expect_status 401 "$status" "a correctly signed but UNENCRYPTED token is refused"
-
+# The cryptographic forgery cases live in packages/crypto/src/tokens.spec.ts, where the test owns
+# every key and can mint a valid JWE wrapping a forged inner JWS, strip a kid, name a revoked key,
+# and so on. They moved there when keys moved into the registry: reproducing them here would mean
+# this shell script unwrapping private keys out of Postgres, which is both fragile and a worse test.
+# What stays here is the black-box HTTP behaviour, which unit tests cannot show.
 status=$(req GET /users "" -H "x-tenant-id: $TENANT_A" -H "authorization: Bearer not-a-token")
 expect_status 401 "$status" "garbage bearer token"
 status=$(req GET /users "" -H "x-tenant-id: $TENANT_A" -H "authorization: $ADMIN_TOKEN")
 expect_status 401 "$status" "token with no Bearer scheme"
 status=$(req GET /users "" -H "x-tenant-id: $TENANT_A")
 expect_status 401 "$status" "no Authorization header at all"
-# Flip a byte inside a segment and re-encode. Note this decodes to bytes first rather than
-# editing the base64url text: the final character of a segment carries only a couple of
-# significant bits, so changing it can re-decode to the identical bytes and prove nothing.
-# Segments of a compact JWE are: header.encryptedKey.iv.ciphertext.tag
-# Note the argv slice: under `node -e`, process.argv[1] is the first user argument, not a
-# script path, so there is exactly one element to skip.
+
+# Tampering needs no keys: flip a byte inside a segment and re-encode. Done on bytes rather than on
+# base64url text because a segment's trailing character carries only a couple of significant bits and
+# can re-encode to identical bytes.
 tamper_segment() {
   node -e '
     const [, token, index] = process.argv;
@@ -373,42 +333,6 @@ tamper_segment() {
   ' "$1" "$2"
 }
 
-# THE attack this design exists to stop (RFC 8725 s2.3, incorrect composition of encryption
-# and signature). The token below is encrypted with the REAL encryption key and has a correct
-# outer header, so it decrypts perfectly. Only its INNER signature is forged. An
-# implementation that decrypted and trusted the result would accept it and hand the caller
-# full admin permissions. Verifying the inner JWS separately is the only thing that catches it.
-FORGED=$(node -e '
-const [,ek,iss,aud,tid]=process.argv;
-import("jose").then(async ({SignJWT,CompactEncrypt})=>{
-  const wrongSigningKey=new Uint8Array(32).fill(9);
-  const jws=await new SignJWT({sub:"00000000-0000-4000-8000-000000000000",tid,
-      roles:["tenant-admin"],permissions:["users:read","users:write","roles:manage"]})
-    .setProtectedHeader({alg:"HS256",typ:"crbk-at+jwt"})
-    .setIssuer(iss).setAudience(aud).setIssuedAt().setExpirationTime("15m")
-    .sign(wrongSigningKey);
-  const jwe=await new CompactEncrypt(new TextEncoder().encode(jws))
-    .setProtectedHeader({alg:"A256KW",enc:"A256GCM",cty:"JWT",typ:"crbk-at+jwt"})
-    .encrypt(new Uint8Array(Buffer.from(ek,"base64url")));
-  process.stdout.write(jwe);
-});' "$ENC_KEY" compliance-ready-backend-kit compliance-kit-api "$TENANT_A_ID" 2>/dev/null)
-
-# Prove the outer layer is genuinely valid, so a 401 can only have come from the signature
-# check. Without this the test could pass for the boring reason that the token was malformed.
-if node -e '
-const [,tok,ek]=process.argv;
-import("jose").then(async ({compactDecrypt})=>{
-  const {protectedHeader}=await compactDecrypt(tok,new Uint8Array(Buffer.from(ek,"base64url")),
-    {keyManagementAlgorithms:["A256KW"],contentEncryptionAlgorithms:["A256GCM"]});
-  if(protectedHeader.cty!=="JWT") process.exit(1);
-}).catch(()=>process.exit(1));' "$FORGED" "$ENC_KEY" 2>/dev/null; then
-  pass "forged-token fixture decrypts cleanly (so the next check tests the signature, not the JWE)"
-else
-  fail "forged-token fixture does not decrypt; the next check would be vacuous"
-fi
-status=$(req GET /users "" -H "x-tenant-id: $TENANT_A" -H "authorization: Bearer $FORGED")
-expect_status 401 "$status" "valid JWE wrapping a FORGED inner JWS is refused (RFC 8725 s2.3)"
-
 for segment in "3:ciphertext" "4:authentication tag" "1:encrypted key"; do
   index="${segment%%:*}"
   label="${segment#*:}"
@@ -418,6 +342,19 @@ for segment in "3:ciphertext" "4:authentication tag" "1:encrypted key"; do
   status=$(req GET /users "" -H "x-tenant-id: $TENANT_A" -H "authorization: Bearer $TAMPERED")
   expect_status 401 "$status" "tampered $label"
 done
+
+# An unknown kid must be refused rather than falling back to the active key. Rewriting the outer
+# header is the black-box version of that attack and needs no key material.
+UNKNOWN_KID=$(node -e '
+  const [, token] = process.argv;
+  const parts = token.split(".");
+  const header = JSON.parse(Buffer.from(parts[0], "base64url").toString());
+  header.kid = "00000000-0000-4000-8000-000000000000";
+  parts[0] = Buffer.from(JSON.stringify(header)).toString("base64url");
+  process.stdout.write(parts.join("."));
+' "$ADMIN_TOKEN")
+status=$(req GET /users "" -H "x-tenant-id: $TENANT_A" -H "authorization: Bearer $UNKNOWN_KID")
+expect_status 401 "$status" "token naming an unknown encryption kid"
 
 step "14. Unknown tenant and missing header are rejected"
 status=$(req GET /users "" -H "x-tenant-id: no-such-tenant-anywhere" \
@@ -508,6 +445,56 @@ anchor=$(jq -r '.type' /tmp/smoke-body | sed 's/.*#//')
 grep -q "^### \`$anchor\`" "$REPO_ROOT/docs/problems.md" \
   && pass "docs/problems.md documents the '$anchor' anchor the type URI points at" \
   || fail "docs/problems.md has no section for anchor '$anchor'"
+
+step "16. The published JWKS is a JWKS, and only the public halves"
+# Checked over the wire rather than by unit test because the failure this catches was invisible from
+# inside the process: the success-envelope interceptor wrapped the key set as
+# {"success":true,"data":{"keys":[...]},"meta":{}}, which every standard JWKS consumer rejects. The
+# handler was correct and its unit test would have passed. Only the bytes on the wire showed it.
+#
+# Served from the origin root, not under /api: RFC 8615 reserves /.well-known for exactly this.
+JWKS_URL="${BASE_URL%/api}/.well-known/jwks.json"
+jwks_status=$(curl -sS -o /tmp/smoke-jwks -D /tmp/smoke-jwks-headers -w '%{http_code}' "$JWKS_URL")
+expect_status 200 "$jwks_status" "GET /.well-known/jwks.json (unauthenticated)"
+
+# `keys` at the top level, not nested inside an envelope.
+jq -e 'has("keys") and (.keys | type == "array")' /tmp/smoke-jwks >/dev/null 2>&1 \
+  && pass "top-level 'keys' array, not wrapped in the success envelope (RFC 7517 s5)" \
+  || fail "not a JWK Set: $(cat /tmp/smoke-jwks)"
+jq -e 'has("success") or has("data")' /tmp/smoke-jwks >/dev/null 2>&1 \
+  && fail "JWKS is wrapped in the response envelope: $(cat /tmp/smoke-jwks)" \
+  || pass "no envelope keys leaked into the document"
+
+[ "$(jq -r '.keys | length' /tmp/smoke-jwks)" -ge 1 ] \
+  && pass "at least one key is published" \
+  || fail "empty key set: $(cat /tmp/smoke-jwks)"
+
+# Every entry must be selectable and usable by a verifier with no out-of-band knowledge.
+jq -e 'all(.keys[]; has("kid") and .alg == "ES256" and .use == "sig" and .kty == "EC")' \
+  /tmp/smoke-jwks >/dev/null 2>&1 \
+  && pass "every key carries kid, alg=ES256, use=sig, kty=EC" \
+  || fail "a key is missing selection metadata: $(cat /tmp/smoke-jwks)"
+
+# The document is public and unauthenticated, so a private scalar here is a key disclosure. 'd' is
+# the EC private key in RFC 7518 s6.2.2.1, and 'k' the symmetric key in s6.4.1.
+jq -e 'any(.keys[]; has("d") or has("k") or .kty == "oct")' /tmp/smoke-jwks >/dev/null 2>&1 \
+  && fail "PRIVATE KEY MATERIAL PUBLISHED: $(cat /tmp/smoke-jwks)" \
+  || pass "no private scalar and no symmetric key in the published set"
+
+# The token's kid must be findable in the JWKS, or a third party cannot verify what we issue.
+TOKEN_KID=$(printf '%s' "$DECODED" | jq -r '.innerHeader.kid')
+jq -e --arg kid "$TOKEN_KID" 'any(.keys[]; .kid == $kid)' /tmp/smoke-jwks >/dev/null 2>&1 \
+  && pass "the inner JWS kid ($TOKEN_KID) is published, so others can verify our tokens" \
+  || fail "kid $TOKEN_KID is not in the JWKS: $(cat /tmp/smoke-jwks)"
+
+# The media type registered for a key set (RFC 7517 s8.5.1). application/json would work for most
+# clients but is not what the registry says.
+grep -iq '^content-type: *application/jwk-set+json' /tmp/smoke-jwks-headers \
+  && pass "served as application/jwk-set+json (RFC 7517 s8.5.1)" \
+  || fail "wrong content-type: $(grep -i '^content-type' /tmp/smoke-jwks-headers)"
+grep -iq '^cache-control: *public' /tmp/smoke-jwks-headers \
+  && pass "cacheable, so verifiers are not forced to refetch per request" \
+  || fail "no public cache-control: $(grep -i '^cache-control' /tmp/smoke-jwks-headers)"
 
 step "Result"
 if [ "$FAILURES" -eq 0 ]; then

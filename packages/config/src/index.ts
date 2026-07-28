@@ -36,45 +36,55 @@ function key256(): z.ZodString {
   });
 }
 
-const schema = z
-  .object({
-    nodeEnv: z.enum(["development", "test", "production"]).default("development"),
-    // Deliberately not 3000/3001: those collide with almost every other dev server.
-    port: z.coerce.number().int().positive().default(3011),
+const schema = z.object({
+  nodeEnv: z.enum(["development", "test", "production"]).default("development"),
+  // Deliberately not 3000/3001: those collide with almost every other dev server.
+  port: z.coerce.number().int().positive().default(3011),
 
-    masterDatabaseUrl: z.url(),
-    tenantClusterUrl: z.url(),
+  masterDatabaseUrl: z.url(),
+  tenantClusterUrl: z.url(),
 
-    /**
-     * Base URI for RFC 9457 `type` values; the problem code is appended as a fragment.
-     * RFC 9457 §3.1.1 recommends an absolute URI and says dereferencing it SHOULD yield
-     * human-readable documentation, so this points at the error catalogue. Override it if you
-     * fork the kit, otherwise your API will cite someone else's docs for its own errors.
-     */
-    problemTypeBaseUri: z
-      .url()
-      .default(
-        "https://github.com/faizahmedfarooqui/compliance-ready-backend-kit/blob/main/docs/problems.md",
-      ),
+  /**
+   * Base URI for RFC 9457 `type` values; the problem code is appended as a fragment.
+   * RFC 9457 §3.1.1 recommends an absolute URI and says dereferencing it SHOULD yield
+   * human-readable documentation, so this points at the error catalogue. Override it if you
+   * fork the kit, otherwise your API will cite someone else's docs for its own errors.
+   */
+  problemTypeBaseUri: z
+    .url()
+    .default(
+      "https://github.com/faizahmedfarooqui/compliance-ready-backend-kit/blob/main/docs/problems.md",
+    ),
 
-    jwtIssuer: z.string().min(1),
-    /** Rejects a token minted for a different service that happens to share our keys. */
-    jwtAudience: z.string().min(1),
-    jwtAccessTtlSeconds: z.coerce.number().int().positive().default(900),
-    /** Signs the inner JWS. */
-    jwtSigningKey: key256(),
-    /** Encrypts the outer JWE. MUST NOT be the same key as jwtSigningKey. */
-    jwtEncryptionKey: key256(),
+  jwtIssuer: z.string().min(1),
+  /** Rejects a token minted for a different service that happens to share our keys. */
+  jwtAudience: z.string().min(1),
+  jwtAccessTtlSeconds: z.coerce.number().int().positive().default(900),
 
-    redisUrl: z.url(),
-  })
-  .refine((c) => c.jwtSigningKey !== c.jwtEncryptionKey, {
-    message:
-      "jwtSigningKey and jwtEncryptionKey must be different keys. Reusing one secret for " +
-      "both couples two independent properties: recovering it would let an attacker both " +
-      "forge tokens and decrypt them.",
-    path: ["jwtEncryptionKey"],
-  });
+  /**
+   * Leeway for clock skew when validating `exp` and `iat`, in seconds.
+   *
+   * Also sets the length of a key-rotation overlap, since a retiring key must stay verifiable for
+   * as long as a token it signed can still be presented: TTL plus this tolerance.
+   */
+  jwtClockToleranceSeconds: z.coerce.number().int().nonnegative().default(5),
+
+  /**
+   * The key-encrypting key (KEK), and now the ONLY key in configuration.
+   *
+   * The token signing and encryption keys used to live here. They moved into the `config_keys`
+   * registry in the master database, where they are stored wrapped by this key. That is the point
+   * of envelope encryption: a key in config is a key in every deploy manifest, CI secret store and
+   * developer shell, whereas one KEK can be moved into KMS, an HSM or an enclave without touching
+   * the rest of the system. See packages/crypto/src/key-provider.ts.
+   *
+   * When a KMS adapter is configured this becomes unnecessary; until then it is what the local
+   * provider wraps with.
+   */
+  keyEncryptionKey: key256(),
+
+  redisUrl: z.url(),
+});
 
 export type AppConfig = z.infer<typeof schema>;
 
@@ -122,9 +132,9 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     jwtIssuer: source.JWT_ISSUER,
     jwtAudience: source.JWT_AUDIENCE,
     jwtAccessTtlSeconds: source.JWT_ACCESS_TTL_SECONDS,
-    // In production both keys are injected from KMS/Secrets Manager, not read from env.
-    jwtSigningKey: source.JWT_SIGNING_KEY,
-    jwtEncryptionKey: source.JWT_ENCRYPTION_KEY,
+    jwtClockToleranceSeconds: source.JWT_CLOCK_TOLERANCE_SECONDS,
+    // In production the KEK is injected from KMS / Secrets Manager, not read from env.
+    keyEncryptionKey: source.KEY_ENCRYPTION_KEY,
     redisUrl: source.REDIS_URL,
   });
 

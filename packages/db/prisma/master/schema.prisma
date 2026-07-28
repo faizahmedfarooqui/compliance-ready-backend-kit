@@ -50,6 +50,106 @@ model Tenant {
   @@map("tenants")
 }
 
+enum KeyPurpose {
+  token_signing
+  token_encryption
+
+  @@map("key_purpose")
+}
+
+enum KeyState {
+  /// Generated, wrapped and stored. Signs nothing, verifies nothing, published nowhere.
+  pending
+  /// The one key that signs (or encrypts). At most one per purpose, enforced by the database.
+  active
+  /// No longer signs, but STILL VERIFIES until not_after. This is the rotation overlap.
+  retiring
+  /// Terminal. Material destroyed, row kept as evidence of what existed and when.
+  revoked
+
+  @@map("key_state")
+}
+
+/// An enum rather than free text, so adding a cipher is a migration: a reviewable change to the
+/// cryptographic inventory rather than a string literal appearing in a commit.
+enum KeyAlgorithm {
+  ES256
+  A256KW
+
+  @@map("key_algorithm")
+}
+
+/// Deployment-wide cryptographic keys for the access-token codec.
+///
+/// CONTROL PLANE, AND DELIBERATELY NOT TENANT-SCOPED. Which tenant a token belongs to is the `tid`
+/// claim INSIDE the ciphertext, so a per-tenant signing key would force a verifier to learn the
+/// tenant before it could verify anything, and every way of doing that is broken: from the claim
+/// itself is circular, from the outer JWE header leaks the tenant on every token and defeats the
+/// encryption, and from the x-tenant-id header makes key selection attacker-directed. One key set
+/// signs for every tenant, and there is one JWKS.
+///
+/// The honest cost, stated because the architecture would otherwise imply otherwise:
+/// database-per-tenant isolates DATA, not this credential. Compromise the active signing key and
+/// you can forge tokens for every tenant. What limits that is the key never being in a tenant
+/// database, never being stored unwrapped, and ES256 meaning verifiers hold only a public key.
+///
+/// Stores ONLY wrapped material. A table of private keys in the same database as the data they
+/// protect is not key management; it means one compromise yields both.
+model ConfigKey {
+  /// The `kid` from the JWS/JWE protected header, which IS the lookup key, so it is the primary
+  /// key rather than a surrogate that would let two rows claim one kid.
+  ///
+  /// TEXT, deliberately NOT @db.Uuid, for two reasons. RFC 7517 section 4.5 makes `kid` a
+  /// case-sensitive string while Postgres normalises uuid case, so a uuid column would silently
+  /// match "ABC..." to "abc...". And an attacker-supplied kid that is not a uuid would raise
+  /// Postgres 22P02 rather than simply not matching, turning a clean 401 into a 500 and an
+  /// error-log flood. That is the same bug this repository already fixed in resolveTenant.
+  kid String @id
+
+  purpose KeyPurpose
+
+  /// Stored so it can be CHECKED at the point of use, not inferred from the token's own header.
+  /// RFC 8725 section 3.1: each key must be used with exactly one algorithm, and that must be
+  /// verified when the cryptographic operation is performed.
+  algorithm KeyAlgorithm
+
+  state KeyState @default(pending)
+
+  /// Output of KeyProvider.wrap: iv(12) || ciphertext || tag(16). NEVER plaintext. Nullable so a
+  /// revoked row can keep its metadata, which is the evidence, without keeping the material, which
+  /// is the liability.
+  wrappedKey Bytes? @map("wrapped_key")
+
+  /// Which key-encrypting key produced `wrappedKey` (KeyProvider.id). Without it, a deployment
+  /// that has rotated or migrated KEKs cannot tell which rows it can still unwrap, and finds out
+  /// during an incident.
+  kekId String @map("kek_id")
+
+  /// Public half, asymmetric keys only, served verbatim from the JWKS endpoint. NULL for symmetric
+  /// keys, which have no publishable half.
+  publicJwk Json? @map("public_jwk")
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  activatedAt DateTime? @map("activated_at") @db.Timestamptz(6)
+  retiringAt  DateTime? @map("retiring_at") @db.Timestamptz(6)
+
+  /// End of the rotation overlap: when this key stops being accepted for verification. Set on
+  /// entering `retiring`, as now + access token TTL + clock tolerance. Shorter and live tokens die
+  /// at rotation; absent and the overlap never ends.
+  notAfter DateTime? @map("not_after") @db.Timestamptz(6)
+
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+
+  /// Required when revoking. "Scheduled rotation" and "suspected compromise" are different events
+  /// and an assessor will ask which one this was.
+  revokedReason String? @map("revoked_reason")
+
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([purpose, state])
+  @@map("config_keys")
+}
+
 /// Deployment-wide configuration that is not tenant-specific.
 model GlobalConfig {
   key       String   @id

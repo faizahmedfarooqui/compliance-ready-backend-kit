@@ -9,8 +9,8 @@ capability maps to a named control in HIPAA (45 CFR Part 164), PCI-DSS v4.0.1, o
 Trust Services Criteria, fact-checked against the primary sources.
 
 **And it tells you which of them actually exist.** The mapping in
-[COMPLIANCE.md](./COMPLIANCE.md) carries a Status column: five controls are implemented, two are
-partial, and six are not built yet. A control mapping without that column is a marketing
+[COMPLIANCE.md](./COMPLIANCE.md) carries a Status column: five controls are implemented, three are
+partial, and five are not built yet. A control mapping without that column is a marketing
 document, because the reader cannot tell a shipped control from an intention. Audit logging is
 currently in the "not built yet" list, which is why this page no longer describes the kit as
 audit-ready.
@@ -114,7 +114,7 @@ pnpm start:auth               # listens on :3011
 Then, in another shell:
 
 ```bash
-pnpm smoke                    # 68 end-to-end checks, including isolation and token forgery
+pnpm smoke                    # 66 end-to-end checks, including isolation and token forgery
 ```
 
 The ports deliberately avoid 5432, 6379, 3000, and 3001. A compliance kit is usually
@@ -214,8 +214,9 @@ All bodies follow the response contract above. Error bodies are `application/pro
 ### Access tokens are nested JWTs: signed, then encrypted
 
 The claims are signed as a JWS, and that signed token is then encrypted as a JWE
-(RFC 7519 §11.2 order: sign, then encrypt). Inner `HS256`; outer `A256KW` + `A256GCM` with
-`cty: JWT`; two separate 256-bit keys, and config refuses to start if they are the same one.
+(RFC 7519 §11.2 order: sign, then encrypt). Inner **`ES256`**; outer `A256KW` + `A256GCM` with
+`cty: JWT`. Both layers name their key with a `kid`, and the keys live in a registry rather than in
+configuration.
 
 The reason is that a signed-only JWT's payload is plaintext base64url, so anyone holding the
 token, **including the browser it was issued to and the end user**, can read the tenant id,
@@ -244,13 +245,57 @@ This is why the kit uses `jose` directly instead of `@nestjs/jwt` and `passport-
 `@nestjs/jwt` wraps `jsonwebtoken`, which is JWS-only, and `passport-jwt` reads the token
 through a synchronous extractor that cannot await a decryption.
 
-**On the inner algorithm.** HS256 is symmetric, so any party that can verify a token can also
-mint one. That set currently has exactly one member, the auth service, which both issues and
-verifies. It is the right choice for v0.1 and the wrong choice the moment a *second* service
-needs to verify tokens it did not issue, because handing it the verification key would hand it
-the ability to forge `roles` and `permissions` for any tenant. That is the trigger to move the
-inner layer to ES256 or EdDSA, keep the private key in the auth service, and publish the public
-key via JWKS. It is called out in the code and on the roadmap rather than left implicit.
+**Why ES256 and not HS256.** HS256 is symmetric, so anything able to verify a token is also able to
+mint one. That is tolerable while a single service does both, and wrong the moment a second service
+verifies tokens it did not issue, because handing it the verification key hands it the power to forge
+`roles` and `permissions` for any tenant. With ES256 a verifier receives only the public half.
+RFC 7518 §3.1 rates ES256 `Recommended+`, above RS256's `Recommended`.
+
+The public keys are published at **`/.well-known/jwks.json`**, at the origin root rather than under
+`/api`, because RFC 8615 reserves `/.well-known/`. The document is a plain JWK Set (RFC 7517 §5)
+served as `application/jwk-set+json`, deliberately **not** wrapped in the success envelope, so
+standard clients such as jose's `createRemoteJWKSet` consume it directly. Every entry carries `kid`,
+`alg` and `use`, so a verifier can select a key with no out-of-band knowledge.
+
+**What the JWKS does not buy you, stated plainly.** The public half is enough to check the inner
+signature, but it is not enough to read a token, because the outer JWE is **symmetric** (`A256KW`).
+A second service cannot verify a kit-issued token from the JWKS alone: it has to be given the
+active encryption key as well, and that key lets it decrypt every token it sees. What it still
+cannot do is **mint** one, because signing needs the ES256 private key that never leaves the
+registry. So the honest summary is that ES256 splits minting from verifying, which is the property
+that matters, while the encryption layer remains a shared secret between services that are trusted
+to read claims. Publishing an asymmetric outer layer (`ECDH-ES`) would close that too and is not
+implemented.
+
+### Keys live in a registry, not in configuration
+
+`config_keys` in the master database holds them, **wrapped**, never in plaintext. The only key left
+in configuration is the key-encrypting key that wraps the others. A key in config is a key in every
+deploy manifest, CI secret store and developer shell; one KEK can move into KMS, an HSM or an enclave
+without touching anything else, which is what the `KeyProvider` port exists for.
+
+```bash
+pnpm keys:init                       # create the first key of each purpose
+pnpm keys:rotate                     # new key active, previous one retiring
+pnpm keys:list                       # show the registry
+pnpm keys:revoke --kid K --reason R  # destroy the material, keep the row as evidence
+pnpm keys:decode "$TOKEN"            # verify a token and print its claims
+```
+
+Rotation is graceful. Activating a new key moves the previous one to `retiring`, where it still
+**verifies** for the access-token TTL plus the clock tolerance, so tokens issued a moment before a
+rotation keep working instead of every live session breaking. Running instances pick up a rotation
+within a minute without a restart. The lifecycle is enforced by Postgres, not by application code: a
+partial unique index permits only one `active` key per purpose, and CHECK constraints pair purpose to
+algorithm, require a public JWK for asymmetric keys, and refuse a `revoked` row that still holds key
+material.
+
+Keys are **deployment-wide, not per tenant**. Which tenant a token belongs to is the `tid` claim
+inside the ciphertext, so a per-tenant key would force a verifier to learn the tenant before it could
+verify anything, and every way of doing that is broken: from the claim is circular, from the outer
+header leaks the tenant on every token, and from the `x-tenant-id` header makes key selection
+attacker-directed. The honest cost is that database-per-tenant isolates data but not this credential:
+compromise the active signing key and you can forge tokens for any tenant.
 
 ### Why the first administrator comes from a seed file
 
@@ -325,7 +370,7 @@ a request, until its database is fully built.
 ## Status
 
 v0.1 is **auth + RBAC on the database-per-tenant foundation**. It builds, typechecks, and
-passes a 68-check end-to-end smoke test against a live Postgres, run in CI on every push.
+passes a 66-check end-to-end smoke test against a live Postgres, run in CI on every push.
 Known gaps, stated plainly because a compliance kit that hides its gaps is worse than no kit:
 
 - **`POST /api/tenants` is unauthenticated.** It creates databases, which makes it the most
@@ -349,18 +394,19 @@ Known gaps, stated plainly because a compliance kit that hides its gaps is worse
   pool. Fine for tens of tenants, not for thousands. Evicting safely needs refcounting,
   because closing a pool while a request holds a client from it breaks that request, so
   it is deliberately left undone rather than done subtly wrong.
-- **No unit test suite** beyond the end-to-end smoke test. CI runs build, typecheck, a
-  tenant-DDL drift check, and the smoke test against a real Postgres, but there are no
-  focused unit tests around the token codec or the connection manager yet.
+- **The layers that talk to Postgres have no unit tests.** The token codec, the key
+  provider, the key registry, config validation and the RBAC guard are unit tested; the
+  connection manager, the services and the operator CLIs are not. Their behaviour depends
+  on real database semantics (transactional DDL, unique-violation codes, partial indexes)
+  that a mock would only assert assumptions about, so they are covered end to end by
+  `scripts/smoke-test.sh` against a real cluster instead. Overall line coverage is
+  around 50%, and `vitest.config.ts` records where the real gates are.
 - **Access tokens are not sender-constrained.** They are encrypted, but still bearer
   credentials: a stolen token is usable by whoever holds it until it expires. mTLS
   (RFC 8705) or DPoP (RFC 9449) is the actual control, and neither is implemented.
-- **No key rotation.** The signing and encryption keys are single values with no `kid` and no
-  overlap window, so rotating them invalidates every live token at once.
-- **The inner signature is symmetric (HS256).** Fine while one service both issues and verifies
-  tokens, which is the case today. A second verifying service would need the same key and could
-  therefore mint tokens, so that is the point to switch to ES256/EdDSA plus JWKS. See the token
-  section above.
+- **The key-encrypting key is in configuration.** Envelope encryption, rotation and a JWKS are all
+  implemented, but no KMS or HSM adapter is written yet, so the KEK is only as protected as the
+  process and its config store. The `KeyProvider` port is the seam for fixing that.
 - **TLS terminates upstream.** The kit speaks plain HTTP and assumes a load balancer or
   service mesh in front. Encryption in transit is a real control (HIPAA 164.312(e)(1),
   PCI Req 4) and it is not satisfied inside this repository.
@@ -371,19 +417,20 @@ Known gaps, stated plainly because a compliance kit that hides its gaps is worse
 | --- | --- |
 | v0.2 | Authenticated + audited control plane, append-only hash-chained audit log, Redis rate limiting |
 | v0.3 | Passkeys / WebAuthn, OIDC, TOTP |
-| v0.4 | KMS envelope encryption for field-level secrets, key rotation |
+| v0.4 | KMS and HSM `KeyProvider` adapters, field-level envelope encryption |
 | v0.5 | OpenTelemetry traces and metrics, structured request logging |
 | Ongoing | CI security gates (CodeQL, osv-scanner, gitleaks, SBOM), per-tenant migration runner, test suite |
 
 ## Stack
 
-NestJS 10 (Fastify adapter), TypeScript strict, Prisma 7 with the `@prisma/adapter-pg`
+NestJS 11 (Fastify adapter), TypeScript strict, Prisma 7 with the `@prisma/adapter-pg`
 driver adapter, Postgres 16, Redis 7, Argon2id, pnpm workspaces.
 
 Argon2id parameters are declared explicitly rather than left to library defaults, in one
-file ([password.service.ts](services/auth/src/auth/password.service.ts)), so that "what
+file ([packages/crypto/src/passwords.ts](packages/crypto/src/passwords.ts)), so that "what
 key-derivation function, at what work factor" has a single readable answer that a library
-upgrade cannot silently change.
+upgrade cannot silently change. Everything cryptographic lives in that package for the same
+reason: two copies of a work factor or a token format eventually disagree.
 
 ## Contributing
 

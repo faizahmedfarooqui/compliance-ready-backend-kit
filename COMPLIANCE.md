@@ -15,7 +15,7 @@ controls list, not a feature list.
 ## Control mapping
 
 **Read the Status column before anything else.** This table maps capabilities to controls; it
-does not assert that this repository implements all of them. Six of the thirteen rows are **not
+does not assert that this repository implements all of them. Five of the fourteen rows are **not
 implemented yet**, and an earlier version of this file listed them with no status column at all,
 which read as a claim. Treat a row without "Implemented" as a control you still have to provide
 some other way.
@@ -31,7 +31,7 @@ some other way.
 | Structured logging + monitoring (OpenTelemetry) | Partial | 164.312(b); 164.308(a)(1)(ii)(D) | Req 10 | CC7.2 |
 | Append-only audit logging | **Not implemented** | 164.312(b); 164.308(a)(1)(ii)(D) | Req 10 (10.2, 10.3.2) | CC7.2 |
 | Authentication (MFA / passkeys / WebAuthn) | **Not implemented** | 164.312(d) | Req 8 (8.4, 8.5) | CC6.1 |
-| Secrets management (KMS envelope encryption) | **Not implemented** | 164.312(a)(2)(iv) | Req 3 (3.6, 3.7) | CC6.1 |
+| Key management (envelope encryption, rotation, JWKS) | Partial | 164.312(a)(2)(iv) | Req 3 (3.6, 3.7, unverified) | CC6.1 |
 | Encryption at rest | **Not implemented** | 164.312(a)(2)(iv) | Req 3 (3.5, 3.5.1) | CC6.1 |
 | Encryption in transit (TLS) | **Not implemented here** | 164.312(e)(1); 164.312(e)(2)(ii) | Req 4 (4.2.1) | CC6.7 |
 | Rate limiting and login throttling (application layer) | **Not implemented** | (none, see notes) | Req 8 (8.3.4, unverified) | CC6.6 |
@@ -41,8 +41,16 @@ some other way.
 
 - **Implemented** — the control is realised in this repository and exercised by the automated
   tests. You still own the organisational half of it.
-- **Partial** — some of it exists. Dependency management has a committed lockfile and a CI gate
-  but no CodeQL, no SBOM and no vulnerability scanner. Logging is structured through the
+- **Partial** — some of it exists. Key management has envelope encryption, a `kid`-indexed registry
+  with a pending/active/retiring/revoked lifecycle enforced by database constraints, graceful
+  rotation with an overlap, and a published JWKS. What it does **not** have is a KMS or HSM adapter:
+  the key-encrypting key still comes from configuration, so it is only as protected as the process
+  and its config store. The `KeyProvider` port exists so that substitution is a new file rather than
+  a redesign, but until it is written, do not cite this row against a requirement that calls for a
+  secure cryptographic device. Dependency management now has a committed lockfile, Dependabot,
+  CodeQL, gitleaks over full history, dependency review on pull requests, and `pnpm audit` as a
+  build-failing gate; what is still missing is an SBOM and a documented 12-month cryptographic
+  inventory review (PCI 12.3.3). Logging is structured through the
   framework logger and carries a trace id on every error, but there is no OpenTelemetry export,
   no trace propagation and no retention policy.
 - **Not implemented** — the row exists because the control is in scope for the kit's roadmap, not
@@ -60,9 +68,14 @@ some other way.
   164.312(e)(2)(ii), are **Addressable** (implement, or document why not and adopt an
   equivalent). Addressable does not mean optional. PCI 3.5 is the parent standard; the
   specific "render stored PAN unreadable" obligation is 3.5.1.
-- **Secrets management.** No HIPAA safeguard names key management; it sits under the
-  encryption mechanism (Addressable). PCI is the strongest fit: 3.6 (key-management
-  processes) and 3.7 (key lifecycle) map directly to KMS envelope encryption.
+- **Key management.** No HIPAA safeguard names key management; it sits under the encryption
+  mechanism (Addressable). PCI is the strongest fit, 3.6 (key-management processes) and 3.7 (key
+  lifecycle), though **both clause numbers are unverified here** because the standard is behind
+  registration. What exists: envelope encryption, so the registry stores only wrapped material and
+  the key-encrypting key never enters the tenant or master data; a `kid`-indexed lifecycle whose
+  invariants are database constraints rather than application code; rotation with an overlap so a
+  retiring key keeps verifying for the token TTL; and a published JWKS so a verifier needs only a
+  public key. What does not exist is a secure cryptographic device holding the KEK.
 - **Authentication.** PCI 8.4/8.5 mandate MFA into the CDE; some sub-requirements became
   mandatory 31 Mar 2025. Phishing-resistant passkeys exceed the baseline.
 - **Password storage.** PCI 8.3.2 is the direct control (strong cryptography renders all
@@ -176,7 +189,9 @@ some other way.
 Token format and its limits (cited in the access-token row):
 
 - RFC 7519, JSON Web Token: §5.2 (`cty` on a nested JWT), §11.2 (sign-then-encrypt order), §12 (privacy considerations): <https://www.rfc-editor.org/rfc/rfc7519>
-- RFC 7518, JSON Web Algorithms: §3.2 (HMAC key size), §4.1 / §5.1 (`alg` and `enc` values), §8.4 (AES-GCM key-use limits): <https://www.rfc-editor.org/rfc/rfc7518>
+- RFC 7518, JSON Web Algorithms: §3.1 (`alg` values for JWS, where ES256 is `Recommended+`), §3.4 (digital signature with ECDSA), §4.1 / §5.1 (`alg` and `enc` values for JWE), §4.4 (key wrapping with AES Key Wrap), §8.4 (AES GCM security considerations): <https://www.rfc-editor.org/rfc/rfc7518>
+- RFC 7517, JSON Web Key: §4.5 (`kid` is a case-sensitive string, which is why `config_keys.kid` is TEXT), §5 (JWK Set format), §8.5.1 (the `application/jwk-set+json` media type): <https://www.rfc-editor.org/rfc/rfc7517>
+- RFC 8615, Well-Known URIs: why the JWKS is served from the origin root rather than under `/api`: <https://www.rfc-editor.org/rfc/rfc8615>
 - RFC 8725 (BCP 225), JWT Best Current Practices: §2.3 / §3.3 (validate both layers), §2.4 (length leakage), §3.2 (TLS may suffice), §3.6 (do not compress), §3.11 (explicit typing): <https://www.rfc-editor.org/rfc/rfc8725>
 - RFC 9068, JWT Profile for OAuth 2.0 Access Tokens: §2.1 / §2.2 (why this kit does **not** claim `at+jwt`), §6 (the disclosure-to-client threat): <https://www.rfc-editor.org/rfc/rfc9068>
 - RFC 9700 (BCP 240), OAuth 2.0 Security Best Current Practice: §2.2.1 (sender-constraining, which this kit does not implement): <https://www.rfc-editor.org/rfc/rfc9700>

@@ -52,6 +52,26 @@ export default defineConfig({
         "**/*.module.ts",
         "**/main.ts",
         "**/dto/**",
+        /**
+         * Operator CLIs. Excluded for the same reason as main.ts: they are argv-driven entry points
+         * whose job is to wire a process up and exit with a status.
+         *
+         * This is an exclusion, not an admission that they are untested. Each one is executed for
+         * real against a real Postgres in CI, which is the only place their behaviour means anything:
+         *   - manage-keys.ts     the "Initialise token keys" and "Key rotation and revocation" steps
+         *   - seed-tenant-admin.ts  step 4 of scripts/smoke-test.sh
+         *   - decode-token.ts    steps 5, 6, 9 and 16 of scripts/smoke-test.sh
+         *
+         * What makes them correct lives in the database, not in the TypeScript: the partial unique
+         * index that permits one active key per purpose, the CHECK constraint pairing purpose to
+         * algorithm, the transaction that retires and promotes atomically. A unit test with a fake
+         * ConnectionManager would assert my beliefs about those constraints instead of the
+         * constraints, pass while they were wrong, and read as coverage. Counting them here would
+         * only make the percentage flatter.
+         */
+        "packages/db/src/keys/manage-keys.ts",
+        "packages/db/src/keys/decode-token.ts",
+        "packages/db/src/seed/**",
       ],
       /**
        * Thresholds reflect what IS covered, not an aspiration. A threshold the suite cannot meet
@@ -68,10 +88,10 @@ export default defineConfig({
        * figure would barely move.
        */
       thresholds: {
-        lines: 30,
-        functions: 30,
-        branches: 25,
-        statements: 30,
+        lines: 45,
+        functions: 40,
+        branches: 40,
+        statements: 45,
 
         // The token codec and the password hashing. Fully covered, and must stay that way.
         "packages/crypto/src/**": {
@@ -101,6 +121,14 @@ export default defineConfig({
           functions: 100,
           statements: 100,
           branches: 80,
+        },
+        // Decides which keys are published to the world and which ones are still accepted, so a
+        // regression here is a silent one: every request keeps succeeding either way.
+        "services/auth/src/keys/key-registry.service.ts": {
+          lines: 85,
+          functions: 80,
+          statements: 80,
+          branches: 65,
         },
       },
     },

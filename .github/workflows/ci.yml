@@ -23,10 +23,11 @@ env:
   REDIS_URL: redis://localhost:56379
   JWT_ISSUER: compliance-ready-backend-kit
   JWT_AUDIENCE: compliance-kit-api
-  # base64url-encoded 256-bit keys. CI-only throwaways, committed on purpose so the run is
-  # reproducible, and therefore public. They must differ from each other (config enforces it).
-  JWT_SIGNING_KEY: ci0only0000000000000000000000000000000000AA
-  JWT_ENCRYPTION_KEY: ci0only0000000000000000000000000000000000BB
+  JWT_CLOCK_TOLERANCE_SECONDS: "5"
+  # The key-encrypting key. The token keys themselves are generated into config_keys by
+  # `pnpm keys:init`, wrapped by this. CI-only throwaway, committed on purpose so the run is
+  # reproducible, and therefore public.
+  KEY_ENCRYPTION_KEY: ci0only0000000000000000000000000000000000AA
   PORT: "3011"
 
 jobs:
@@ -146,9 +147,16 @@ jobs:
             exit 1
           fi
 
-      # Readiness is polled from the health endpoint rather than grepped out of the log. A log
-      # line says a message was printed; a 200 from /api/health says the server is actually
-      # accepting connections, which is the thing the next step depends on.
+      # The service has no token keys until this runs, so every login would fail. Deliberately an
+      # operational step rather than something a migration does: a migration is committed to git and
+      # replayed into a shadow database, so any key it generated would be public and identical
+      # everywhere. See packages/db/src/keys/manage-keys.ts.
+      - name: Initialise token keys
+        run: pnpm keys:init
+
+      # Readiness is polled from the health endpoint rather than grepped out of the log. A log line
+      # says a message was printed; a 200 from /api/health says the server is actually accepting
+      # connections, which is the thing the next step depends on.
       - name: Start auth-service
         run: |
           pnpm start:auth > /tmp/auth.log 2>&1 &
@@ -165,6 +173,44 @@ jobs:
 
       - name: Smoke test
         run: pnpm smoke
+
+      # The rest of the key lifecycle, after the smoke test rather than before it so revoking a key
+      # cannot invalidate a token the smoke test is still using.
+      #
+      # This runs here because it is not unit testable in any way worth trusting. What makes rotation
+      # correct is the database: the partial unique index that permits exactly one active key per
+      # purpose, and the single transaction that retires the old key and promotes the new one. A fake
+      # ConnectionManager would assert my beliefs about those constraints rather than the constraints,
+      # so manage-keys.ts is excluded from unit coverage and proved here against real Postgres
+      # instead. See the coverage exclusions in vitest.config.ts.
+      - name: Key rotation and revocation
+        run: |
+          set -euo pipefail
+
+          pnpm keys:rotate --purpose signing
+          pnpm keys:list | tee /tmp/keys.txt
+
+          # One active signing key, and exactly one retiring one carrying the overlap window.
+          active=$(grep -c 'token_signing *active' /tmp/keys.txt || true)
+          retiring=$(grep -c 'token_signing *retiring .* until ' /tmp/keys.txt || true)
+          if [ "$active" != "1" ] || [ "$retiring" != "1" ]; then
+            echo "::error::after rotation expected 1 active + 1 retiring signing key, got ${active} + ${retiring}"
+            exit 1
+          fi
+
+          # Revoking the ACTIVE key must be refused: it would leave the service unable to issue
+          # tokens at all. `!` rather than `|| true` so a zero exit here fails the build.
+          active_kid=$(awk '/token_signing *active/ { print $4 }' /tmp/keys.txt)
+          if pnpm keys:revoke --kid "$active_kid" --reason "ci-should-refuse" 2>/tmp/revoke.txt; then
+            echo "::error::revoking the active key succeeded; it must be refused"
+            exit 1
+          fi
+          grep -q 'is the ACTIVE' /tmp/revoke.txt
+
+          # Revoking the retiring key is allowed, and destroys its material.
+          retiring_kid=$(awk '/token_signing *retiring/ { print $4 }' /tmp/keys.txt)
+          pnpm keys:revoke --kid "$retiring_kid" --reason "ci-lifecycle-check"
+          pnpm keys:list | grep -q "revoked .* ${retiring_kid}"
 
       - name: Service log
         if: always()

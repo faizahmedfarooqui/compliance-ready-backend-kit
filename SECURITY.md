@@ -56,9 +56,11 @@ Out of scope:
   disclosed, so a report that `POST /api/tenants` is unauthenticated tells us nothing new.
   A way to exploit one of them that the README does not anticipate is very much in scope.
 - Findings that depend on the deliberately insecure local defaults: the `postgres/postgres`
-  credentials in `docker-compose.yml`, and the `JWT_SIGNING_KEY` / `JWT_ENCRYPTION_KEY`
-  placeholders in `.env.example` and `.github/workflows/ci.yml`, exist for local development
-  and CI. They are committed on purpose, are therefore public, and are labelled as such.
+  credentials in `docker-compose.yml`, and the `KEY_ENCRYPTION_KEY` placeholder in
+  `.env.example` and `.github/workflows/ci.yml`, exist for local development and CI. They are
+  committed on purpose, are therefore public, and are labelled as such. The token signing and
+  encryption keys are **not** among them: those are generated per deployment by
+  `pnpm keys:init` and stored wrapped in `config_keys`, so there is no committed value to find.
 - Missing hardening in example or documentation code, absent a concrete exploit.
 - Vulnerabilities in Node, Postgres, Redis, NestJS, or Prisma themselves. Report those
   upstream; tell us if this kit's usage makes one materially worse.

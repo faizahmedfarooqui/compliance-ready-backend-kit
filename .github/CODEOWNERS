@@ -1,0 +1,15 @@
+# Code owners for compliance-ready-backend-kit.
+#
+# GitHub requests a review from the matching owner on every pull request that touches a path
+# below. Ownership does not restrict who may open a pull request or push a branch; that is the
+# job of the branch ruleset. Nor does it block a merge on its own: to make owner review
+# mandatory, enable "Require review from Code Owners" on the ruleset protecting `main`.
+#
+# Note that GitHub does not request a review from the author of a pull request, so while
+# @faizahmedfarooqui is the sole owner this file has no visible effect on his own PRs. It starts
+# earning its keep the moment a second person contributes, which is the point of adding it before
+# that happens rather than after.
+#
+# Last match wins, so any narrower rule added later must go BELOW this one.
+
+* @faizahmedfarooqui
