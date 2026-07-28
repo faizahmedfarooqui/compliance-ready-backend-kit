@@ -1,0 +1,36 @@
+title = "compliance-ready-backend-kit gitleaks config"
+
+# `[[allowlists]]` (plural) replaced `[allowlist]` in gitleaks v8.25.0.
+minVersion = "v8.25.0"
+
+[extend]
+# Keep every default rule. This file only adds exceptions, and adding an exception should always
+# be a deliberate, reviewed act.
+useDefault = true
+
+# The repository deliberately commits non-secret placeholder keys, and a scanner that fails on
+# those is a scanner people will disable. Each value below is allowlisted INDIVIDUALLY rather than
+# by allowlisting the files that contain them. That distinction matters: allowlisting
+# `.env.example` wholesale would mean a real credential pasted into it later would never be
+# flagged, which is the exact mistake this scan exists to catch.
+[[allowlists]]
+description = "Published dev and CI placeholder keys, which are public by design"
+regexTarget = "line"
+regexes = [
+  # .env.example: base64url 256-bit placeholders, documented in that file as public knowledge.
+  '''devonly0{40}A{2}''',
+  '''devonly0{40}B{2}''',
+  # .github/workflows/ci.yml: CI-only throwaways, committed so a run is reproducible.
+  '''ci0only0{40}A{2}''',
+  '''ci0only0{40}B{2}''',
+  # docker-compose.yml and .env.example: the local Postgres superuser. Local development only,
+  # and the compose file binds to non-default ports precisely because it is not production.
+  '''postgres://postgres:postgres@localhost''',
+]
+
+[[allowlists]]
+description = "Test fixtures and smoke-test passwords, which authenticate nothing real"
+paths = [
+  '''.*\.spec\.ts''',
+  '''scripts/smoke-test\.sh''',
+]

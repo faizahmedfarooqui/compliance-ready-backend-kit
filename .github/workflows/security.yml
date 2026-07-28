@@ -1,0 +1,106 @@
+name: Security
+
+# Separate from ci.yml on purpose. These checks answer a different question ("is there a known
+# vulnerability or a leaked secret") and run on a schedule as well as per-change, because a
+# dependency that was clean on Monday can have a published advisory by Friday without anyone
+# touching the repository.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly. A compliance kit that only scans when someone happens to push is not scanning.
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      # Required so findings appear in the Security tab rather than only in the job log.
+      security-events: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+          # security-and-quality is broader than the default security-extended and includes
+          # maintainability rules. For a kit whose readers are evaluating code quality as much as
+          # its controls, the extra findings are the point.
+          queries: security-and-quality
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:javascript-typescript"
+
+  dependencies:
+    name: Dependency advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Fails the build on a high or critical advisory. That is deliberately a gate and not a
+      # report: a check that cannot fail is theatre, and this row of COMPLIANCE.md is meant to be
+      # evidence. If an advisory is genuinely unfixable, triage it with a pnpm override or an
+      # explicitly documented exception. Do not weaken the threshold to make the build pass.
+      - name: pnpm audit
+        run: pnpm audit --audit-level=high
+
+  dependency-review:
+    name: Dependency review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Only meaningful on a pull request, where there is a base to diff the dependency graph against.
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/dependency-review-action@v5
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # gitleaks scans history, so a shallow clone would miss a secret committed earlier and
+          # later removed, which is exactly the case that still needs rotating.
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Required for repositories owned by an ORGANISATION, not by a user account. This repo is
+          # under a user account, so it runs without one. If you fork this into an org, obtain a
+          # free key from gitleaks.io and add it as a secret, or this job will fail.
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}

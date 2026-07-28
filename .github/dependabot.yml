@@ -1,0 +1,32 @@
+version: 2
+
+# Dependency currency is a named control, not housekeeping: HIPAA 164.308(a)(5)(ii)(B) on
+# protection from malicious software, PCI-DSS Req 6.3.x on identifying and addressing
+# vulnerabilities, and SOC 2 CC7.1. Automating it is the difference between a policy and a habit.
+updates:
+  # "npm" is the ecosystem identifier for the whole Node family, pnpm-lock.yaml included. There is
+  # no separate "pnpm" value.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    # Grouped, because a monorepo on separate PRs per package produces a wall of noise that gets
+    # ignored, and an ignored dependency PR is worse than none: it trains you to dismiss them.
+    groups:
+      nestjs:
+        patterns: ["@nestjs/*"]
+      prisma:
+        patterns: ["prisma", "@prisma/*"]
+      lint-and-test:
+        patterns: ["eslint*", "@eslint/*", "typescript-eslint", "prettier*", "vitest", "@vitest/*"]
+      types:
+        patterns: ["@types/*"]
+    # Security patches should not wait for the weekly window, and Dependabot raises those
+    # separately from version updates regardless of this schedule.
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
