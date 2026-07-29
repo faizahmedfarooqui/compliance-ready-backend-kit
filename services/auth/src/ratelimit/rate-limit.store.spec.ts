@@ -75,14 +75,14 @@ describe("RateLimitStore member ids", () => {
   /**
    * THE REGRESSION THIS FILE EXISTS FOR: a genuinely separate process.
    *
-   * `vi.resetModules()` plus a re-import gives a fresh module registry, so the second store gets a NEW
-   * randomly generated INSTANCE_ID and a counter starting from zero. That is what a replica or a restart
-   * looks like, and it is the case a same-process test cannot reach.
+   * Two factories, because that is what two processes are. The production code builds exactly one at
+   * module scope, so a second can only be reached by exporting the factory, which is why it is exported.
+   * A test holding one store, or two stores, cannot express "another process" at all.
    *
    * With `${process.pid}:${counter}` both processes emitted `1:1`, `1:2`, `1:3`, because a containerised
-   * process gets PID 1. `ZADD` on an existing member updates its score and returns 0, so the second
-   * process's events silently were not counted and the limiter permitted roughly twice its configured
-   * limit across two replicas.
+   * process gets PID 1 and each counter starts at zero. `ZADD` on an existing member updates its score
+   * and returns 0, so the second process's events silently were not counted and the limiter permitted
+   * roughly twice its configured limit across two replicas.
    */
   it("never collide with a separately created factory, which is what a replica or restart is", () => {
     const processA = newMemberIdFactory();

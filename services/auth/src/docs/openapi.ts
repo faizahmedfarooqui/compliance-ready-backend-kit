@@ -137,8 +137,14 @@ export function setupOpenApi(app: NestFastifyApplication, config: AppConfig): vo
   );
 
   SwaggerModule.setup("docs", app, document, {
-    jsonDocumentUrl: "docs/openapi.json",
-    yamlDocumentUrl: "docs/openapi.yaml",
+    // Leading slashes because these are paths from the ORIGIN ROOT, not relative to the "docs" mount
+    // above. Written without one they read as relative, which invites the reasonable guess that they
+    // resolve to /docs/docs/openapi.json. They do not: verified by request, /docs/openapi.json answers
+    // 200 and /docs/docs/openapi.json answers 404 either way. The slash makes the behaviour legible
+    // instead of something you have to test to know, and step 17 of the smoke test fetches the path so
+    // a future change in how these are resolved fails the build rather than silently moving the spec.
+    jsonDocumentUrl: "/docs/openapi.json",
+    yamlDocumentUrl: "/docs/openapi.yaml",
     swaggerOptions: {
       // Keeps a pasted credential across page reloads, so trying three endpoints does not mean
       // authorising three times.
