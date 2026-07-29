@@ -28,6 +28,8 @@ env:
   # `pnpm keys:init`, wrapped by this. CI-only throwaway, committed on purpose so the run is
   # reproducible, and therefore public.
   KEY_ENCRYPTION_KEY: ci0only0000000000000000000000000000000000AA
+  # Gates POST /api/tenants, which the smoke test calls. CI-only throwaway, committed on purpose.
+  CONTROL_PLANE_API_KEY: ci0only0000000000000000000000000000000000CP
   PORT: "3011"
 
 jobs:
@@ -173,6 +175,45 @@ jobs:
 
       - name: Smoke test
         run: pnpm smoke
+
+      # A raw-socket check, so it cannot live in the HTTP smoke test. It reproduces the dribbled-body
+      # slowloris attack and asserts the server answers 408 and hangs up.
+      #
+      # Run with a short timeout so CI does not wait 30s. That is not weakening the test: the mechanism
+      # is what this proves, and the 30s production default is asserted by the config unit tests. The
+      # service is restarted with the short value because the timeout is fixed at construction.
+      - name: Slowloris probe (request timeout is actually in effect)
+        run: |
+          set -euo pipefail
+
+          # stop-auth.sh kills by port using lsof, and swallows lsof's absence so it can report
+          # "nothing listening" rather than failing. That would be the worst outcome here: the old
+          # server would survive, the new one would fail to bind, and the probe would run against a
+          # 30s timeout while expecting 4s, failing for a reason that has nothing to do with the code.
+          command -v lsof >/dev/null || {
+            echo "::error::lsof is not available, so the port cannot be freed reliably"
+            exit 1
+          }
+          ./scripts/stop-auth.sh
+
+          # The timeout is fixed when the HTTP server is constructed, so a shorter one needs a restart.
+          REQUEST_TIMEOUT_MS=4000 CONNECTIONS_CHECKING_INTERVAL_MS=1000 \
+            pnpm start:auth > /tmp/auth-slow.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -fsS "http://localhost:${PORT}/api/health" >/dev/null 2>&1 && break
+            sleep 1
+          done
+
+          # Confirm this is the RESTARTED process. Same reasoning as step 0 of the smoke test: a stale
+          # server answers every request happily and the suite reports on the wrong build.
+          uptime=$(curl -fsS "http://localhost:${PORT}/api/health" | jq -r '.data.uptimeSeconds')
+          if [ "$uptime" -ge 60 ]; then
+            echo "::error::still talking to the previous server (uptime ${uptime}s), not the restart"
+            cat /tmp/auth-slow.log
+            exit 1
+          fi
+
+          REQUEST_TIMEOUT_MS=4000 pnpm smoke:slowloris
 
       # The rest of the key lifecycle, after the smoke test rather than before it so revoking a key
       # cannot invalidate a token the smoke test is still using.

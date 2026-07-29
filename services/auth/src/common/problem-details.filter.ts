@@ -9,6 +9,7 @@ import {
   Logger,
 } from "@nestjs/common";
 import {
+  ControlPlaneUnauthorizedError,
   CrossTenantTokenError,
   DomainError,
   EmailAlreadyRegisteredError,
@@ -17,6 +18,7 @@ import {
   TenantAlreadyExistsError,
   TenantContextMissingError,
   TenantNotFoundError,
+  TooManyRequestsError,
   ValidationFailedError,
   type ProblemDetails,
 } from "@compliance-kit/common";
@@ -42,6 +44,7 @@ const STATUS_BY_ERROR: readonly [new (...args: never[]) => DomainError, HttpStat
   [InvalidCredentialsError, HttpStatus.UNAUTHORIZED],
   [InvalidAccessTokenError, HttpStatus.UNAUTHORIZED],
   [CrossTenantTokenError, HttpStatus.UNAUTHORIZED],
+  [ControlPlaneUnauthorizedError, HttpStatus.UNAUTHORIZED],
   [TenantNotFoundError, HttpStatus.NOT_FOUND],
   [TenantAlreadyExistsError, HttpStatus.CONFLICT],
   [EmailAlreadyRegisteredError, HttpStatus.CONFLICT],
@@ -49,6 +52,7 @@ const STATUS_BY_ERROR: readonly [new (...args: never[]) => DomainError, HttpStat
   // rejects it with 400 first, so 400 and 422 stay meaningfully different for clients.
   [ValidationFailedError, HttpStatus.UNPROCESSABLE_ENTITY],
   [TenantContextMissingError, HttpStatus.BAD_REQUEST],
+  [TooManyRequestsError, HttpStatus.TOO_MANY_REQUESTS],
 ];
 
 @Catch()
@@ -73,6 +77,17 @@ export class ProblemDetailsFilter implements ExceptionFilter {
         `${request.method} ${request.url} failed [traceId=${traceId}]: ${describe(exception)}`,
         exception instanceof Error ? exception.stack : undefined,
       );
+    }
+
+    if (exception instanceof TooManyRequestsError) {
+      // RFC 6585 s4 makes Retry-After a MAY on a 429, and RFC 9110 s10.2.3 defines delay-seconds as a
+      // non-negative INTEGER. TooManyRequestsError rounds up and floors at 1 for that reason, so a
+      // sub-second wait cannot serialise as "0" and tell a client to retry at once.
+      reply.header("retry-after", String(exception.retryAfterSeconds));
+      // RFC 6585 s4: a 429 response "MUST NOT be stored by a cache". A shared cache replaying one
+      // would either hand a 429 to callers who are within their limit, or keep serving it after the
+      // window has passed.
+      reply.header("cache-control", "no-store");
     }
 
     void reply
@@ -147,6 +162,11 @@ export class ProblemDetailsFilter implements ExceptionFilter {
  */
 const CODE_BY_STATUS: Readonly<Record<number, string>> = {
   [HttpStatus.BAD_REQUEST]: "MALFORMED_REQUEST",
+  // RBAC denials arrive here as Nest ForbiddenExceptions, so without this entry the most common
+  // authorization failure in the kit served `code: "HTTP_403"` and a type URI pointing at
+  // `#http-403`, a heading that does not exist. That breaks the one promise RFC 9457 makes about
+  // `type`: that dereferencing it yields documentation.
+  [HttpStatus.FORBIDDEN]: "FORBIDDEN",
   [HttpStatus.NOT_FOUND]: "ROUTE_NOT_FOUND",
   [HttpStatus.METHOD_NOT_ALLOWED]: "METHOD_NOT_ALLOWED",
   [HttpStatus.NOT_ACCEPTABLE]: "NOT_ACCEPTABLE",
@@ -157,6 +177,7 @@ const CODE_BY_STATUS: Readonly<Record<number, string>> = {
 
 const TITLE_BY_STATUS: Readonly<Record<number, string>> = {
   [HttpStatus.BAD_REQUEST]: "Malformed request",
+  [HttpStatus.FORBIDDEN]: "Insufficient permissions",
   [HttpStatus.NOT_FOUND]: "Resource not found",
   [HttpStatus.METHOD_NOT_ALLOWED]: "Method not allowed",
   [HttpStatus.NOT_ACCEPTABLE]: "Not acceptable",

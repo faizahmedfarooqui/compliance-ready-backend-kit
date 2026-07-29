@@ -99,6 +99,18 @@ production path. `fastify` itself allows `^9.6.0` and so would take the fix, but
 the 9.x line (`"find-my-way@9": "^9.7.0"`), which leaves an unrelated 8.x consumer in the tooling
 alone. Verified by confirming both `fastify` and `@nestjs/platform-fastify` now resolve 9.7.0.
 
+Adding OpenAPI documentation in v0.2 flagged a second one:
+[GHSA-pm4m-ph32-ghv5](https://github.com/advisories/GHSA-pm4m-ph32-ghv5), exponential parsing time in
+`js-yaml` flow collections, reachable through `@nestjs/swagger`. Fixed the same way, with
+`"js-yaml@5": "^5.2.2"` scoped to the 5.x line so the unrelated 4.x consumer in the tooling is
+untouched, and verified by resolving 5.2.2 and confirming `/docs/openapi.yaml` still renders.
+
+Worth noting what the exposure actually was, because "high" and "exposed" are not the same thing: the
+advisory is about PARSING adversarial YAML, and this service only ever SERIALISES its own OpenAPI
+document. There was no path by which a caller's input reached the parser. It was still fixed rather
+than annotated, because an accurate dependency inventory is worth more than an argument, and the next
+person to add a YAML-parsing feature should inherit a patched version rather than that argument.
+
 ## What this project is not
 
 This kit provides technical scaffolding that supports compliance controls. It is **not** a

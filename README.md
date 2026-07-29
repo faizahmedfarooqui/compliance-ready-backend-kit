@@ -204,12 +204,99 @@ Three things worth knowing:
 | Method | Route | Auth | Notes |
 | --- | --- | --- | --- |
 | `GET` | `/api/health` | none | Liveness. Returns service, version, `startedAt`, `uptimeSeconds` |
-| `POST` | `/api/tenants` | **none (see Status)** | Provision a tenant, its database, and its RBAC catalogue. Creates no users |
-| `POST` | `/api/auth/register` | tenant header only | Create an **unprivileged** user. Holds no roles until granted one |
-| `POST` | `/api/auth/login` | tenant header only | Returns a nested JWT carrying `sub` (user id), `tid` (tenant id), roles, and flattened permissions |
+| `POST` | `/api/tenants` | **control-plane key** | Provision a tenant, its database, and its RBAC catalogue. Creates no users. 30/hour |
+| `POST` | `/api/auth/register` | tenant header only | Create an **unprivileged** user. Holds no roles until granted one. 10/min |
+| `POST` | `/api/auth/login` | tenant header only | Returns a nested JWT carrying `sub` (user id), `tid` (tenant id), roles, and flattened permissions. 20/min, plus failure throttling |
 | `GET` | `/api/users` | full chain, `users:read` | Lists users in the calling tenant's database |
+| `GET` | `/.well-known/jwks.json` | none | Public verification keys. A bare JWK Set, deliberately not enveloped |
+| `GET` | `/docs` | none | OpenAPI UI. Document at `/docs/openapi.json` and `/docs/openapi.yaml` |
 
-All bodies follow the response contract above. Error bodies are `application/problem+json`.
+All bodies follow the response contract above, except `/.well-known/jwks.json`. Error bodies are
+`application/problem+json`.
+
+### Browsable docs, and why the spec is not generated naively
+
+`/docs` serves the OpenAPI UI; `/docs/openapi.json` and `/docs/openapi.yaml` serve the document.
+`API_DOCS_ENABLED=false` turns all of it off, and the service logs a warning if it is left on with
+`NODE_ENV=production`, because an OpenAPI document is a complete map of every route, parameter and
+constraint. That is its value to an integrator and equally its value to an attacker.
+
+One thing had to be built rather than generated. Handlers return a bare resource and an interceptor
+wraps it in `{ success, data, meta }`, and the OpenAPI generator reads return types without knowing
+interceptors exist. Left alone it documents the resource at the top level, which is not a cosmetic
+inaccuracy: a generated client compiles, runs, and deserialises every field to `undefined`. So every
+success response is declared through an `ApiEnvelope` helper that composes the envelope with the
+concrete resource via `allOf`, and the smoke test fails if any 2xx response in the published document
+is missing that composition.
+
+### Rate limiting and login throttling
+
+Two controls, both on Redis, using a sliding window evaluated atomically in a Lua script. A fixed
+window would have been shorter to write and would permit twice the limit across a boundary, which for a
+request budget is untidy and for login throttling is the whole control.
+
+**Request budgets** apply per client: 100/min by default, with stricter budgets where the work is
+expensive or privileged (`/auth/login` 20/min, `/auth/register` 10/min, `POST /tenants` 30/hour). A
+route with its own budget is checked against *both*, because a stricter limit is asking for less than
+the default, not for a fresh allowance on top of it. Every response carries `X-RateLimit-Limit` and
+`X-RateLimit-Remaining`; a 429 adds `Retry-After` in whole seconds and `Cache-Control: no-store`.
+
+**Login throttling** counts *failed* logins per account and per source address. Two axes, because one
+address against many accounts and many addresses against one account are different attacks and each
+counter only sees one of them. A successful login clears the account counter but **not** the address
+counter: clearing both would hand anyone holding a single valid account a reset button for their own
+address budget. Failures are counted rather than attempts, so a user who mistypes and then succeeds is
+never nearer a limit.
+
+Two settings deserve a decision rather than a default:
+
+- **`TRUST_PROXY`** decides what `request.ip` means, and therefore whether rate limiting works at all.
+  Left `false` behind a load balancer, every request appears to come from the balancer and all traffic
+  shares one bucket, so the first busy client throttles everyone. Set `true` without a trusted proxy in
+  front, and any caller sends `X-Forwarded-For` to get a fresh bucket per request. It defaults to
+  `false` because that failure is loud and the other is silent.
+- **`RATE_LIMIT_FAIL_OPEN`** decides what happens when Redis is unreachable. Open by default, because
+  closed turns a Redis blip into a total API outage including login, which is a bigger incident than
+  the one being prevented. Every occurrence is logged at error level and the response carries
+  `X-RateLimit-Degraded: true`, so the degradation is visible rather than quiet.
+
+### The control plane needs its own credential
+
+`POST /api/tenants` creates a database, which made it the most privileged route in the kit, and until
+v0.2 it was unauthenticated behind a source comment asking people not to expose it. That is not a
+control: nothing enforced it and nothing detected the mistake.
+
+It now requires `Authorization: Bearer $CONTROL_PLANE_API_KEY`. The key is **required** with no
+default, so the service refuses to boot without one rather than silently reopening the hole. A user
+access token deliberately cannot be used instead: at the moment of the call there is no tenant to be a
+member of and no user to hold a role, so every data-plane credential is scoped to something that does
+not exist yet.
+
+The honest limitation, which matters for an access review: a shared secret authenticates the **bearer**,
+not a person. It cannot say which operator provisioned a tenant, cannot be scoped to one action, and
+rotating it invalidates every caller at once. Enough to close the hole; not enough for attributable
+administrative access, which needs mutual TLS or a signed operator token carrying an identity.
+
+### Request-level DoS limits, and a Fastify option that silently does nothing
+
+`requestTimeout`, `connectionTimeout`, `keepAliveTimeout` and `bodyLimit` are declared explicitly in
+validated config rather than inherited, for the same reason the Argon2id parameters are: a value that
+governs a security property should have one readable answer that a library upgrade cannot change
+quietly.
+
+The request timeout is worth its own note, because setting it the obvious way does not work.
+**Fastify's `requestTimeout` option has no effect for any value under 60 seconds, and fails silently.**
+Node derives `headersTimeout = min(60000, requestTimeout)` inside `http.createServer` and validates
+`headersTimeout <= requestTimeout` there and only there. Fastify creates the server first and assigns
+`server.requestTimeout` afterwards without touching `headersTimeout`, so a configured 30s leaves an
+inconsistent pair that the constructor would have rejected, and Node's expiry sweep then never expires
+anything. Fastify's own default of `0` is worse than it looks: it is assigned unconditionally, so it
+does not inherit Node's 300s, it *disables* the timeout.
+
+The kit therefore passes the value through `http` (the constructor) **and** at the top level. Verified
+against a real socket rather than by reading: `pnpm smoke:slowloris` completes valid headers, declares a
+`Content-Length`, dribbles the body one byte at a time, and asserts the server answers `408` and hangs
+up. Every other combination leaves the body unbounded.
 
 ### Access tokens are nested JWTs: signed, then encrypted
 
@@ -369,24 +456,23 @@ a request, until its database is fully built.
 
 ## Status
 
-v0.1 is **auth + RBAC on the database-per-tenant foundation**. It builds, typechecks, and
-passes a 66-check end-to-end smoke test against a live Postgres, run in CI on every push.
+v0.2 is **auth + RBAC + a key registry + rate limiting + an authenticated control plane**, on the
+database-per-tenant foundation. It builds, typechecks, passes 192 unit tests and an 88-check
+end-to-end smoke test against a live Postgres and Redis, run in CI on every push.
+
 Known gaps, stated plainly because a compliance kit that hides its gaps is worse than no kit:
 
-- **`POST /api/tenants` is unauthenticated.** It creates databases, which makes it the most
-  privileged route here. It exists in this state for local bootstrap. Gate it behind an admin
-  credential and audit logging before exposing it anywhere. This is the single biggest thing
-  to fix before real use.
 - **No audit log yet.** Provisioning, login, and permission changes are the events an
-  assessor will ask to see, and today they are not recorded. Append-only logging is the
-  next milestone.
-- **No rate limiting or login throttling.** Nothing throttles `/auth/login`, so nothing resists
-  credential stuffing. Note that throttling is not a substitute for phishing-resistant MFA: one
-  attempt per account across ten thousand accounts never trips a per-account counter.
-- **No request or connection timeouts.** Fastify's `requestTimeout` and `connectionTimeout` both
-  default to no limit, and this kit does not override them, so a client that opens a connection and
-  dribbles a request slowly holds a socket indefinitely. That is slowloris, and it needs a value set
-  here as well as limits at the load balancer.
+  assessor will ask to see, and today they are not recorded. This is the single biggest
+  remaining gap and the rest of v0.2. Note what it means for the control plane: the credential
+  authenticates the bearer rather than a person, so even once events are recorded, "which operator
+  provisioned this tenant" will need mutual TLS or a signed operator token to answer.
+- **Login throttling is not a substitute for MFA.** It resists credential stuffing against an
+  account or from an address, and it does nothing about one attempt per account across ten thousand
+  accounts, which trips no per-account counter. Phishing-resistant MFA is the actual control and it
+  is not implemented.
+- **Rate limiting bounds requests, not bandwidth.** It runs in the application, so the traffic has
+  already arrived. Anything volumetric belongs at the load balancer or a CDN.
 - **Permissions are baked into the access token** at login. A permission revoked
   mid-session stays usable until the token expires (default 15 minutes). If your access
   review requires immediate revocation, check against the database per request.
@@ -415,7 +501,7 @@ Known gaps, stated plainly because a compliance kit that hides its gaps is worse
 
 | Milestone | Contents |
 | --- | --- |
-| v0.2 | Authenticated + audited control plane, append-only hash-chained audit log, Redis rate limiting |
+| v0.2 | **Landed:** authenticated control plane, Redis rate limiting + login throttling, request-level DoS limits. **Remaining:** append-only hash-chained audit log, which is what makes the control plane *audited* as well as authenticated |
 | v0.3 | Passkeys / WebAuthn, OIDC, TOTP |
 | v0.4 | KMS and HSM `KeyProvider` adapters, field-level envelope encryption |
 | v0.5 | OpenTelemetry traces and metrics, structured request logging |

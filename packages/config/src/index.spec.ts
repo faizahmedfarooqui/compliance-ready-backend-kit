@@ -9,6 +9,7 @@ import { loadConfig } from "./index";
  */
 
 const KEK = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const CP_KEY = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
 
 function validEnv(overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
   return {
@@ -17,6 +18,7 @@ function validEnv(overrides: Record<string, string | undefined> = {}): NodeJS.Pr
     JWT_ISSUER: "test-issuer",
     JWT_AUDIENCE: "test-audience",
     KEY_ENCRYPTION_KEY: KEK,
+    CONTROL_PLANE_API_KEY: CP_KEY,
     REDIS_URL: "redis://localhost:56379",
     ...overrides,
   };
@@ -52,6 +54,7 @@ describe("loadConfig", () => {
       ["JWT_ISSUER", undefined],
       ["JWT_AUDIENCE", undefined],
       ["KEY_ENCRYPTION_KEY", undefined],
+      ["CONTROL_PLANE_API_KEY", undefined],
       ["REDIS_URL", undefined],
     ])("a missing %s", (name) => {
       expect(() => loadConfig(validEnv({ [name]: undefined }))).toThrow(/Invalid configuration/);
@@ -110,7 +113,85 @@ describe("loadConfig", () => {
     ).toBe(30);
   });
 
+  /**
+   * The control-plane key must be REQUIRED, never defaulted. POST /api/tenants creates databases and
+   * was unauthenticated before this key existed; a default would silently restore that state for anyone
+   * who did not set one, and the whole point is that the service refuses to run without it.
+   */
+  it("refuses to start without a control-plane key, rather than defaulting to one", () => {
+    expect(() => loadConfig(validEnv({ CONTROL_PLANE_API_KEY: undefined }))).toThrow(
+      /controlPlaneApiKey/,
+    );
+  });
+
+  it("requires the control-plane key to be a full 256 bits, not a memorable phrase", () => {
+    expect(() => loadConfig(validEnv({ CONTROL_PLANE_API_KEY: "letmein" }))).toThrow(
+      /base64url-encoded 256-bit key/,
+    );
+  });
+
+  // Sharing one value would mean a leaked operator credential also unwraps every token key.
+  it("keeps the control-plane key separate from the KEK", () => {
+    const config = loadConfig(validEnv());
+    expect(config.controlPlaneApiKey).toBe(CP_KEY);
+    expect(config.controlPlaneApiKey).not.toBe(config.keyEncryptionKey);
+  });
+
   it("names the offending field in the error, so a bad deploy is diagnosable", () => {
     expect(() => loadConfig(validEnv({ REDIS_URL: undefined }))).toThrow(/redisUrl/);
+  });
+
+  /**
+   * The HTTP limits are denial-of-service controls, so their defaults are asserted rather than
+   * assumed. Fastify's own defaults for the first two are 0, which does not mean "use Node's
+   * default": Fastify assigns them to the Node server unconditionally, so 0 disables the timeout
+   * outright. That is the hole these values close, and a silent revert to 0 would reopen it.
+   */
+  describe("HTTP limits", () => {
+    it("bounds the time a client gets to send a whole request", () => {
+      expect(loadConfig(validEnv()).requestTimeoutMs).toBe(30_000);
+    });
+
+    it("pins the keep-alive and body limits rather than inheriting them", () => {
+      const config = loadConfig(validEnv());
+      // Above the 60s an AWS ALB idles at, so the proxy never reuses a socket we just closed.
+      expect(config.keepAliveTimeoutMs).toBe(72_000);
+      expect(config.bodyLimitBytes).toBe(1_048_576);
+    });
+
+    it("keeps the socket inactivity timeout above the keep-alive timeout", () => {
+      const config = loadConfig(validEnv());
+      expect(config.connectionTimeoutMs).toBeGreaterThan(config.keepAliveTimeoutMs);
+    });
+
+    /**
+     * The ordering is an invariant, not a preference. Inverted, the inactivity timeout silently
+     * becomes the rule governing idle connections, keepAliveTimeoutMs stops meaning anything, and the
+     * load-balancer race it exists to prevent comes back as intermittent 502s that appear in no
+     * application log. Cheaper to refuse at boot.
+     */
+    it("refuses to start when that ordering is inverted", () => {
+      expect(() =>
+        loadConfig(validEnv({ CONNECTION_TIMEOUT_MS: "10000", KEEP_ALIVE_TIMEOUT_MS: "72000" })),
+      ).toThrow(/CONNECTION_TIMEOUT_MS must be greater than KEEP_ALIVE_TIMEOUT_MS/);
+    });
+
+    it("accepts an override that respects the ordering", () => {
+      const config = loadConfig(
+        validEnv({ CONNECTION_TIMEOUT_MS: "20000", KEEP_ALIVE_TIMEOUT_MS: "15000" }),
+      );
+      expect(config.connectionTimeoutMs).toBe(20_000);
+      expect(config.keepAliveTimeoutMs).toBe(15_000);
+    });
+
+    // Zero is the specific value that means "disabled", so it must not be settable by accident.
+    it("refuses a zero or negative timeout, which would mean no timeout at all", () => {
+      expect(() => loadConfig(validEnv({ REQUEST_TIMEOUT_MS: "0" }))).toThrow(
+        /Invalid configuration/,
+      );
+      expect(() => loadConfig(validEnv({ BODY_LIMIT_BYTES: "-1" }))).toThrow(
+        /Invalid configuration/,
+      );
+    });
   });
 });

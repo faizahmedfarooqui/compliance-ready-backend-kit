@@ -83,10 +83,189 @@ const schema = z.object({
    */
   keyEncryptionKey: key256(),
 
+  /**
+   * Bearer credential for the control plane, which today means provisioning tenants.
+   *
+   * REQUIRED, with no default, and that is the point. An optional key would leave the route open
+   * whenever it was unset, which is the state the route shipped in: `POST /api/tenants` creates
+   * databases and was reachable by anyone who could open a socket. A control that is only present when
+   * someone remembers to configure it is not a control, so the service refuses to boot without one.
+   *
+   * A shared secret, and worth being blunt about what that means. It authenticates the bearer and
+   * nothing else: it does not identify WHICH operator called, it cannot be scoped to one action, it is
+   * replayable by anyone who reads it from a log or a shell history, and rotating it invalidates every
+   * caller at once. It is the right primitive for a kit because it needs no infrastructure, and the
+   * wrong one for a mature deployment, which should use mutual TLS or a signed operator token with an
+   * identity in it. Treated as a step on the way, not a destination.
+   *
+   * 256 bits, the same shape as the KEK, so it cannot be set to a guessable phrase.
+   */
+  controlPlaneApiKey: key256(),
+
   redisUrl: z.url(),
+
+  /**
+   * Whether to publish the OpenAPI document and the browsable UI at /docs.
+   *
+   * Defaults to ON, because a kit whose API is undiscoverable is a kit nobody adopts, and because the
+   * spec is the honest description of the wire contract. Turn it OFF in production unless you mean to
+   * publish it: an OpenAPI document is a complete map of every route, parameter and constraint, which is
+   * precisely its value to an author and to an attacker. The service logs a warning when it is left on
+   * with NODE_ENV=production, rather than quietly overriding the setting.
+   */
+  apiDocsEnabled: z
+    .string()
+    .optional()
+    .transform((v) => v !== "false" && v !== "0")
+    .pipe(z.boolean()),
+
+  // ---------------------------------------------------------------------------
+  // HTTP server limits, declared explicitly rather than inherited.
+  //
+  // Same reasoning as the Argon2id parameters: a value that governs a security property should have
+  // one readable answer that a library upgrade cannot silently change. These four are the whole
+  // request-level denial-of-service surface, so leaving them implicit means nobody can say what the
+  // service actually tolerates without reading Fastify's source, which is what happened before they
+  // were pinned here.
+  //
+  // Fastify 5.10's own defaults are requestTimeout 0, connectionTimeout 0, keepAliveTimeout 72000,
+  // bodyLimit 1048576. The first two are the problem: Fastify assigns `server.requestTimeout =
+  // options.requestTimeout` unconditionally, so a default of 0 does not fall back to Node's 300s, it
+  // actively DISABLES the timeout Node would otherwise have applied.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Milliseconds a client gets to send an entire request, headers and body.
+   *
+   * This is the slowloris defence, and it has to be this setting rather than a connection timeout.
+   * Node's `headersTimeout` (60s, which Fastify leaves alone) already bounds a client that dribbles
+   * its headers. What nothing bounded was a client that completes its headers, declares a
+   * Content-Length, and then sends the body one byte at a time: no individual gap is suspicious, no
+   * inactivity timeout fires, and the connection is held open for as long as the attacker likes.
+   * Multiply by the connection limit and the server is out of sockets.
+   *
+   * 30s is generous for this API, whose bodies are small JSON documents. RAISE IT if you add file
+   * upload: a 1 MiB body over a slow mobile link legitimately takes minutes, and this setting will
+   * cut it off.
+   */
+  requestTimeoutMs: z.coerce.number().int().positive().default(30_000),
+
+  /**
+   * Socket inactivity timeout (Node's `server.setTimeout`).
+   *
+   * Deliberately ABOVE keepAliveTimeout, and that ordering is the whole point. This is a backstop for
+   * a socket that is neither mid-request nor a recognised idle keep-alive, so it must not preempt the
+   * keep-alive timeout: set it lower and it silently becomes the rule that governs idle connections,
+   * making keepAliveTimeoutMs dead config and reintroducing the load-balancer race described below.
+   */
+  connectionTimeoutMs: z.coerce.number().int().positive().default(75_000),
+
+  /**
+   * How long an idle keep-alive connection is kept.
+   *
+   * Longer than it looks like it should be, on purpose. This must EXCEED the idle timeout of whatever
+   * sits in front of the service, because if the proxy reuses a socket the server has just closed,
+   * the client gets a 502 that appears in no application log. AWS ALB idles at 60s by default, hence
+   * 72s here, which is also Fastify's default. Lower it only after lowering the proxy's.
+   */
+  keepAliveTimeoutMs: z.coerce.number().int().positive().default(72_000),
+
+  /** Maximum request body in bytes. Fastify's own default, pinned so it cannot drift. */
+  bodyLimitBytes: z.coerce.number().int().positive().default(1_048_576),
+
+  /**
+   * How often Node sweeps in-flight requests looking for expired ones.
+   *
+   * This is the granularity of `requestTimeoutMs`, not a separate limit. Node does not arm a timer per
+   * request; it walks the connection list on an interval and destroys whatever has overstayed, so the
+   * effective deadline is the timeout PLUS up to one interval. Node's own default is 30s, which would
+   * make a 30s request timeout fire anywhere between 30s and 60s.
+   *
+   * 5s trades one unref'd interval timer for enforcement that is within 5s of the deadline. The sweep
+   * itself is a native walk over the connection list, so the cost does not scale with request volume,
+   * only with concurrent connections.
+   */
+  connectionsCheckingIntervalMs: z.coerce.number().int().positive().default(5_000),
+
+  // ---------------------------------------------------------------------------
+  // Rate limiting.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Whether to believe `X-Forwarded-For`.
+   *
+   * This single boolean decides whether rate limiting works at all, and BOTH settings are wrong in
+   * some deployment, so it has to be a deliberate choice rather than a default anyone can ignore.
+   *
+   * Left false behind a load balancer, every request appears to come from the balancer's address, so
+   * all of your traffic shares one bucket and the first busy client rate-limits everybody. Set true
+   * without a trusted proxy in front, and a caller simply sends `X-Forwarded-For: <anything>` to get
+   * a fresh bucket per request, which defeats the control silently.
+   *
+   * The default is false because that failure is loud (everyone gets 429s, you notice within
+   * minutes) whereas the other is silent (the limiter reports healthy and enforces nothing). Turn it
+   * on when, and only when, something you control is appending the header.
+   */
+  trustProxy: z
+    .string()
+    .optional()
+    .transform((v) => v === "true" || v === "1")
+    .pipe(z.boolean()),
+
+  /** Requests allowed per client per window, for routes with no explicit limit of their own. */
+  rateLimitDefaultLimit: z.coerce.number().int().positive().default(100),
+  rateLimitDefaultWindowMs: z.coerce.number().int().positive().default(60_000),
+
+  /**
+   * Failed logins allowed per account, and per source address, before both are throttled.
+   *
+   * Counted on FAILURE only and cleared on success, so an ordinary user who mistypes twice and then
+   * succeeds is never nearer a limit. Ten in fifteen minutes leaves room for a forgotten password
+   * while removing any useful rate of guessing.
+   */
+  loginThrottleLimit: z.coerce.number().int().positive().default(10),
+  loginThrottleWindowMs: z.coerce.number().int().positive().default(900_000),
+
+  /**
+   * What to do when Redis cannot be reached: serve the request (true) or reject it (false).
+   *
+   * Fails OPEN by default, and this is a real trade rather than an oversight. Closed turns a Redis
+   * blip into a total outage of the whole API, including the login route, which is a bigger incident
+   * than the one being prevented. Open means that during an outage there is no rate limiting, which
+   * is why every occurrence is logged at error level: the control degrades visibly rather than
+   * quietly.
+   *
+   * Set false where unmetered access is the greater risk, and accept that Redis then becomes a
+   * hard dependency for serving traffic.
+   */
+  rateLimitFailOpen: z
+    .string()
+    .optional()
+    .transform((v) => v !== "false" && v !== "0")
+    .pipe(z.boolean()),
 });
 
-export type AppConfig = z.infer<typeof schema>;
+/**
+ * The two timeouts interact, so the ordering is checked at boot rather than trusted to the comments
+ * above. A deployment that lowers connectionTimeoutMs below keepAliveTimeoutMs would still start and
+ * still serve traffic, while quietly governing idle connections by the wrong rule; that is precisely
+ * the class of misconfiguration this file exists to refuse.
+ */
+const withInvariants = schema
+  .refine((c) => c.connectionTimeoutMs > c.keepAliveTimeoutMs, {
+    message:
+      "CONNECTION_TIMEOUT_MS must be greater than KEEP_ALIVE_TIMEOUT_MS, or the socket inactivity " +
+      "timeout preempts the keep-alive timeout and becomes the rule that governs idle connections",
+    path: ["connectionTimeoutMs"],
+  })
+  .refine((c) => c.connectionsCheckingIntervalMs < c.requestTimeoutMs, {
+    message:
+      "CONNECTIONS_CHECKING_INTERVAL_MS must be less than REQUEST_TIMEOUT_MS, or the sweep " +
+      "granularity rather than the timeout decides when a slow request is cut off",
+    path: ["connectionsCheckingIntervalMs"],
+  });
+
+export type AppConfig = z.infer<typeof withInvariants>;
 
 /**
  * Find the nearest `.env` walking up from `startDir`. A service is started from its own
@@ -123,7 +302,7 @@ export function loadLocalDotenv(): void {
 
 /** Build config from a raw source (default: process.env), validating the shape. */
 export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
-  const parsed = schema.safeParse({
+  const parsed = withInvariants.safeParse({
     nodeEnv: source.NODE_ENV,
     port: source.PORT,
     masterDatabaseUrl: source.MASTER_DATABASE_URL,
@@ -135,7 +314,20 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     jwtClockToleranceSeconds: source.JWT_CLOCK_TOLERANCE_SECONDS,
     // In production the KEK is injected from KMS / Secrets Manager, not read from env.
     keyEncryptionKey: source.KEY_ENCRYPTION_KEY,
+    controlPlaneApiKey: source.CONTROL_PLANE_API_KEY,
     redisUrl: source.REDIS_URL,
+    apiDocsEnabled: source.API_DOCS_ENABLED,
+    requestTimeoutMs: source.REQUEST_TIMEOUT_MS,
+    connectionTimeoutMs: source.CONNECTION_TIMEOUT_MS,
+    keepAliveTimeoutMs: source.KEEP_ALIVE_TIMEOUT_MS,
+    bodyLimitBytes: source.BODY_LIMIT_BYTES,
+    connectionsCheckingIntervalMs: source.CONNECTIONS_CHECKING_INTERVAL_MS,
+    trustProxy: source.TRUST_PROXY,
+    rateLimitDefaultLimit: source.RATE_LIMIT_DEFAULT_LIMIT,
+    rateLimitDefaultWindowMs: source.RATE_LIMIT_DEFAULT_WINDOW_MS,
+    loginThrottleLimit: source.LOGIN_THROTTLE_LIMIT,
+    loginThrottleWindowMs: source.LOGIN_THROTTLE_WINDOW_MS,
+    rateLimitFailOpen: source.RATE_LIMIT_FAIL_OPEN,
   });
 
   if (!parsed.success) {

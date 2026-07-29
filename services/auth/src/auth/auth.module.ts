@@ -4,6 +4,7 @@ import { AuthService } from "./auth.service";
 import { PasswordService } from "./password.service";
 import { TokenService } from "./token.service";
 import { AccessTokenGuard } from "./access-token.guard";
+import { LoginThrottleService } from "./login-throttle.service";
 
 /**
  * No JwtModule and no PassportModule. Access tokens are nested JWTs (signed, then
@@ -17,7 +18,7 @@ import { AccessTokenGuard } from "./access-token.guard";
 @Global()
 @Module({
   controllers: [AuthController],
-  providers: [AuthService, PasswordService, TokenService, AccessTokenGuard],
+  providers: [AuthService, PasswordService, TokenService, AccessTokenGuard, LoginThrottleService],
   exports: [TokenService, AccessTokenGuard, PasswordService],
 })
 export class AuthModule {}
