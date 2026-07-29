@@ -3,7 +3,9 @@
 # End-to-end smoke test against a running auth-service.
 #
 # Proves the paths that matter, in order:
-#   1-2.  a tenant can be provisioned with its own database and RBAC catalogue, and a
+#   1.    the control plane refuses callers without its credential, and a rejected call creates
+#         nothing and is still rate limited (the limiter runs before authentication)
+#   1b-2. a tenant can be provisioned with its own database and RBAC catalogue, and a
 #         duplicate slug is refused
 #   3-4.  provisioning creates NO users, and the seed file grants the first administrator
 #         (idempotently)
@@ -18,6 +20,11 @@
 #   14.   an unknown tenant and a missing header are rejected
 #   15.   every response follows the contract: RFC 9457 problem details for errors,
 #         { success, data, meta } for success
+#   16.   the published JWKS is a JWK Set carrying only public halves
+#   17.   the OpenAPI document describes the API as it actually behaves, including the envelope
+#
+# Not covered here, because it needs a raw socket and takes as long as the request timeout:
+#   scripts/slowloris-probe.mjs, run as `pnpm smoke:slowloris`.
 #
 # Usage:
 #   docker compose up -d
@@ -52,10 +59,10 @@ fi
 req() {
   local method="$1" path="$2" body="${3:-}" ; shift 3 || shift 2
   if [ -n "$body" ]; then
-    curl -sS -o /tmp/smoke-body -w '%{http_code}' -X "$method" "$BASE_URL$path" \
+    curl -sS -o /tmp/smoke-body -D /tmp/smoke-headers -w '%{http_code}' -X "$method" "$BASE_URL$path" \
       -H 'content-type: application/json' "$@" -d "$body"
   else
-    curl -sS -o /tmp/smoke-body -w '%{http_code}' -X "$method" "$BASE_URL$path" "$@"
+    curl -sS -o /tmp/smoke-body -D /tmp/smoke-headers -w '%{http_code}' -X "$method" "$BASE_URL$path" "$@"
   fi
 }
 
@@ -73,6 +80,14 @@ expect_status() {
 # verification the service performs.
 token_claims() {
   node "$REPO_ROOT/packages/db/dist/keys/decode-token.js" "$1" | jq '.claims'
+}
+
+# Provisioning is a control-plane call and needs the control-plane credential. Read from the
+# environment rather than from .env, because CI has no .env file, and under `set -e` an unset
+# variable would abort the whole script rather than fail one assertion.
+CP_KEY="${CONTROL_PLANE_API_KEY:-}"
+provision() {
+  req POST /tenants "$1" -H "authorization: Bearer $CP_KEY"
 }
 
 seed_admin() {
@@ -132,19 +147,54 @@ TENANT_B="smoke-b-$RUN_ID"
 ADMIN_A="admin@$TENANT_A.example"
 ADMIN_B="admin@$TENANT_B.example"
 
-step "1. Provision two tenants (each gets its own database)"
-status=$(req POST /tenants "{\"slug\":\"$TENANT_A\",\"name\":\"Smoke A\"}")
+step "1. The control plane refuses anyone without its credential"
+# This route creates DATABASES. It shipped unauthenticated behind a comment asking people not to
+# expose it, which is why these assertions come before the ones that use it: if the gate regresses,
+# the suite should say so before it goes on to prove that provisioning works.
+status=$(req POST /tenants "{\"slug\":\"nope-$RUN_ID\",\"name\":\"No Key\"}")
+expect_status 401 "$status" "POST /tenants with NO credential"
+[ "$(jq -r '.code' /tmp/smoke-body)" = "CONTROL_PLANE_UNAUTHORIZED" ] \
+  && pass "rejection carries the CONTROL_PLANE_UNAUTHORIZED code" \
+  || fail "unexpected code: $(cat /tmp/smoke-body)"
+
+status=$(req POST /tenants "{\"slug\":\"nope-$RUN_ID\",\"name\":\"Bad Key\"}" \
+  -H "authorization: Bearer wrong0000000000000000000000000000000000000")
+expect_status 401 "$status" "POST /tenants with a WRONG credential"
+
+# A wrong key and a missing key must be indistinguishable, or a prober learns whether their header
+# shape was accepted and whether the route is protected at all.
+status=$(req POST /tenants "{\"slug\":\"nope-$RUN_ID\",\"name\":\"Malformed\"}" \
+  -H "authorization: $CP_KEY")
+expect_status 401 "$status" "POST /tenants with the key but no Bearer scheme"
+
+# Rate limiting runs BEFORE authentication, so a rejected call still spends budget. That ordering is
+# deliberate: the limiter is a global guard and the credential check is a route guard, and bounding
+# floods from callers with no credential at all is the entire purpose. The headers prove it happened,
+# which is what stops someone "tidying" the guard order and silently making unauthenticated floods
+# free.
+[ -n "$(grep -i '^x-ratelimit-limit:' /tmp/smoke-headers 2>/dev/null || true)" ] \
+  && pass "the rejected call was rate limited too, so the limiter runs before authentication" \
+  || fail "no x-ratelimit-limit header on a rejected control-plane call: the limiter did not run"
+
+# The tenant from the rejected calls must not exist. A 401 that still created the database would be
+# worse than no gate at all, because it would look like it worked.
+status=$(req POST /auth/login "{\"email\":\"x@x.example\",\"password\":\"$USER_PASSWORD\"}" \
+  -H "x-tenant-id: nope-$RUN_ID")
+expect_status 404 "$status" "the rejected tenant was never created"
+
+step "1b. Provision two tenants (each gets its own database)"
+status=$(provision "{\"slug\":\"$TENANT_A\",\"name\":\"Smoke A\"}")
 expect_status 201 "$status" "POST /tenants ($TENANT_A)"
 TENANT_A_ID=$(jq -r '.data.id' /tmp/smoke-body)
 [ "$(jq -r '.data.status' /tmp/smoke-body)" = "active" ] \
   && pass "tenant marked active after provisioning" \
   || fail "tenant status is not active: $(cat /tmp/smoke-body)"
 
-status=$(req POST /tenants "{\"slug\":\"$TENANT_B\",\"name\":\"Smoke B\"}")
+status=$(provision "{\"slug\":\"$TENANT_B\",\"name\":\"Smoke B\"}")
 expect_status 201 "$status" "POST /tenants ($TENANT_B)"
 
 step "2. Duplicate slug is rejected"
-status=$(req POST /tenants "{\"slug\":\"$TENANT_A\",\"name\":\"Dup\"}")
+status=$(provision "{\"slug\":\"$TENANT_A\",\"name\":\"Dup\"}")
 expect_status 409 "$status" "POST /tenants with an existing slug"
 
 step "3. Provisioning creates no users, so nobody can log in yet"
@@ -398,7 +448,10 @@ case "$ct" in
 esac
 
 # Validation: 422 with a per-field errors array, JSON Pointers and all (RFC 9457 s3.2).
-status=$(req POST /tenants '{"slug":"BAD SLUG","name":"x","extra":1}')
+# Credentialed on purpose. The control-plane guard runs before the validation pipe, so without the
+# key this would be a 401 and would prove nothing about validation. Authenticating first is the right
+# order: a caller with no credential should not have their body parsed and reported on.
+status=$(provision '{"slug":"BAD SLUG","name":"x","extra":1}')
 expect_status 422 "$status" "invalid field values give 422, not 400"
 jq -e '.code == "VALIDATION_FAILED" and (.errors | length) >= 3' /tmp/smoke-body >/dev/null 2>&1 \
   && pass "422 body carries the errors extension" \
@@ -495,6 +548,70 @@ grep -iq '^content-type: *application/jwk-set+json' /tmp/smoke-jwks-headers \
 grep -iq '^cache-control: *public' /tmp/smoke-jwks-headers \
   && pass "cacheable, so verifiers are not forced to refetch per request" \
   || fail "no public cache-control: $(grep -i '^cache-control' /tmp/smoke-jwks-headers)"
+
+step "17. The OpenAPI document describes the API as it actually behaves"
+# A published spec that disagrees with the wire is worse than none: a generated client compiles, runs,
+# and silently deserialises every field to undefined. These assertions are about that specific failure.
+spec_status=$(curl -sS -o /tmp/smoke-spec -w '%{http_code}' "${BASE_URL%/api}/docs/openapi.json")
+expect_status 200 "$spec_status" "GET /docs/openapi.json"
+
+jq -e '.openapi and .info.title and (.paths | length > 0)' /tmp/smoke-spec >/dev/null 2>&1 \
+  && pass "a well-formed OpenAPI document with at least one path" \
+  || fail "not a usable OpenAPI document: $(head -c 200 /tmp/smoke-spec)"
+
+# THE assertion. Handlers return a bare resource and an interceptor adds { success, data, meta }, and
+# the generator cannot see interceptors. Any 2xx documented as the bare resource is a lie, so every
+# success schema must compose the envelope.
+undocumented=$(jq -r '
+  [ .paths
+    | to_entries[]
+    | .key as $path
+    | .value | to_entries[]
+    | .key as $method
+    | .value.responses | to_entries[]
+    | select(.key | startswith("2"))
+    | select(.value.content["application/json"] != null)
+    | select((.value.content["application/json"].schema.allOf // []) | length == 0)
+    | "\($method|ascii_upcase) \($path) \(.key)"
+  ] | join(", ")' /tmp/smoke-spec)
+[ -z "$undocumented" ] \
+  && pass "every JSON success response composes the { success, data, meta } envelope" \
+  || fail "these 2xx responses document the bare resource, not the envelope: $undocumented"
+
+# The JWKS route is the deliberate exception, and it must stay outside the envelope.
+jq -e '.paths["/.well-known/jwks.json"].get.responses["200"].content["application/jwk-set+json"]' \
+  /tmp/smoke-spec >/dev/null 2>&1 \
+  && pass "the JWKS route is documented as a bare JWK Set, not an envelope" \
+  || fail "JWKS response is not documented as application/jwk-set+json"
+
+# Errors must be documented with the media type they are actually served as, or a client negotiating
+# on content type will fail to parse them.
+jq -e '[ .paths[] | .[] | .responses | to_entries[]
+         | select(.key | test("^[45]"))
+         | select(.value.content["application/problem+json"] == null) ] | length == 0' \
+  /tmp/smoke-spec >/dev/null 2>&1 \
+  && pass "every documented 4xx/5xx uses application/problem+json (RFC 9457 s3)" \
+  || fail "some error responses are not documented as application/problem+json"
+
+# Both credentials, kept separate. One combined scheme would imply a token good for one is good for
+# the other, which is how an operator credential ends up in a service that only needed to read users.
+jq -e '.components.securitySchemes.accessToken and .components.securitySchemes.controlPlane' \
+  /tmp/smoke-spec >/dev/null 2>&1 \
+  && pass "the user token and the control-plane credential are separate security schemes" \
+  || fail "security schemes missing or collapsed into one"
+
+# Every documented error code must have a section in docs/problems.md, since the type URI points there.
+missing_docs=""
+for code in $(jq -r '[.paths[] | .[] | .responses | to_entries[]
+                      | select(.key | test("^[45]"))
+                      | .value.description
+                      | capture("`code`: `(?<c>[A-Z_]+)`").c ] | unique | .[]' /tmp/smoke-spec); do
+  anchor=$(printf '%s' "$code" | tr 'A-Z_' 'a-z-')
+  grep -q "^### \`$anchor\`" "$REPO_ROOT/docs/problems.md" || missing_docs="$missing_docs $anchor"
+done
+[ -z "$missing_docs" ] \
+  && pass "every error code in the spec has a section in docs/problems.md" \
+  || fail "codes documented in the spec but not in docs/problems.md:$missing_docs"
 
 step "Result"
 if [ "$FAILURES" -eq 0 ]; then

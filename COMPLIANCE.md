@@ -15,10 +15,11 @@ controls list, not a feature list.
 ## Control mapping
 
 **Read the Status column before anything else.** This table maps capabilities to controls; it
-does not assert that this repository implements all of them. Five of the fourteen rows are **not
-implemented yet**, and an earlier version of this file listed them with no status column at all,
-which read as a claim. Treat a row without "Implemented" as a control you still have to provide
-some other way.
+does not assert that this repository implements all of them. Of the sixteen rows, **eight** are
+implemented, **three** are partial, **three** are not implemented at all, and **two** are
+deliberately outside this repository. An earlier version of this file listed thirteen rows with no
+status column, which read as a claim to all of them. Treat any row that does not say "Implemented"
+as a control you still have to provide some other way.
 
 | Capability | Status | HIPAA (45 CFR) | PCI-DSS v4.0.1 | SOC 2 (TSC) |
 | --- | --- | --- | --- | --- |
@@ -34,8 +35,10 @@ some other way.
 | Key management (envelope encryption, rotation, JWKS) | Partial | 164.312(a)(2)(iv) | Req 3 (3.6, 3.7, unverified) | CC6.1 |
 | Encryption at rest | **Not implemented** | 164.312(a)(2)(iv) | Req 3 (3.5, 3.5.1) | CC6.1 |
 | Encryption in transit (TLS) | **Not implemented here** | 164.312(e)(1); 164.312(e)(2)(ii) | Req 4 (4.2.1) | CC6.7 |
-| Rate limiting and login throttling (application layer) | **Not implemented** | (none, see notes) | Req 8 (8.3.4, unverified) | CC6.6 |
+| Rate limiting and login throttling (application layer) | **Implemented** | (none, see notes) | Req 8 (8.3.4, unverified) | CC6.6 |
 | DoS / DDoS protection (network layer) | **Not implemented here** | (none, see notes) | Req 6 (6.4.2, unverified) | CC6.6 |
+| Request-level DoS limits (timeouts, body size) | **Implemented** | (none, see notes) | (none, see notes) | CC6.6 |
+| Control-plane authorization (tenant provisioning) | **Implemented** | 164.312(a)(1); 164.308(a)(4) | Req 7 | CC6.3 |
 
 ### What the statuses mean
 
@@ -60,6 +63,47 @@ some other way.
   and it means the control is satisfied outside this repository or not at all.
 
 ## Notes on the mappings
+
+- **Rate limiting and login throttling.** Two distinct controls, both on Redis with a sliding window
+  evaluated atomically in a Lua script. A per-client request budget applies to every route, with
+  stricter budgets on the routes that cost real work (`/auth/login`, `/auth/register`,
+  `POST /tenants`). Login throttling counts FAILED logins per account and per source address; the
+  account counter is cleared on a successful login, the address counter is not, because otherwise
+  anyone holding one valid account could reset their own address budget on demand.
+
+  On PCI-DSS 8.3.4, stated carefully: the requirement text has **not** been verified against the
+  standard, hence "unverified" in the table, and a strict reading asks for a lockout of at least 30
+  minutes. The kit implements a **throttle** with a configurable window, not a lockout, because an
+  unauthenticated way to disable a named user indefinitely is a denial of service anyone can aim at
+  anyone. Set `LOGIN_THROTTLE_WINDOW_MS=1800000` for the 30-minute reading.
+
+  What this does **not** do: it is per-instance-shared-through-Redis, so it bounds requests, not
+  bandwidth, and it cannot stop traffic before it reaches the application. Anything volumetric belongs
+  in the row below.
+
+- **Request-level DoS limits.** `requestTimeout`, `connectionTimeout`, `keepAliveTimeout` and
+  `bodyLimit` are declared explicitly in validated config rather than inherited from Fastify. The one
+  that matters is the request timeout, and it is worth knowing why it is not simply "an option we set":
+  Fastify defaults `requestTimeout` to 0 and assigns it to the Node server unconditionally, so the
+  default does not fall back to Node's 300s, it DISABLES the timeout. A client could complete its
+  headers, declare a Content-Length, and then send the body one byte at a time indefinitely.
+
+  Node also derives `headersTimeout = min(60000, requestTimeout)` inside `http.createServer` and
+  validates the pair only there, so setting `requestTimeout` after construction, which is what Fastify
+  does, leaves an inconsistent pair that silently never expires anything. The kit therefore passes the
+  value through `http` (the constructor) AND at the top level, and `scripts/slowloris-probe.mjs`
+  reproduces the attack against a real socket to prove the response is a 408.
+
+- **Control-plane authorization.** `POST /api/tenants` creates a database. It was unauthenticated
+  until v0.2, guarded by nothing but a source comment. It now requires
+  `Authorization: Bearer <CONTROL_PLANE_API_KEY>`, compared in constant time after an explicit length
+  check, so a wrong-length credential is a 401 rather than the crash `timingSafeEqual` would raise.
+
+  Honest limitation, and it matters for an access-review question: this authenticates the **bearer**,
+  not a person. It cannot say WHICH operator provisioned a tenant, cannot be scoped to one action, and
+  rotating it invalidates every caller at once. Sufficient to close the hole, insufficient for
+  attributable administrative access, which needs mutual TLS or a signed operator token carrying an
+  identity.
 
 - **Audit logging.** PCI 10.3.2 (protect audit logs from modification) is the direct
   analogue of append-only immutability. HIPAA 164.308(a)(1)(ii)(D) activity review is

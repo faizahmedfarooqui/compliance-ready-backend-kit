@@ -3,12 +3,14 @@ import { BadRequestException, HttpStatus, NotFoundException } from "@nestjs/comm
 import type { ArgumentsHost } from "@nestjs/common";
 import type { AppConfig } from "@compliance-kit/config";
 import {
+  ControlPlaneUnauthorizedError,
   CrossTenantTokenError,
   EmailAlreadyRegisteredError,
   InvalidAccessTokenError,
   InvalidCredentialsError,
   TenantAlreadyExistsError,
   TenantNotFoundError,
+  TooManyRequestsError,
   ValidationFailedError,
   type ProblemDetails,
 } from "@compliance-kit/common";
@@ -104,6 +106,64 @@ describe("ProblemDetailsFilter", () => {
   it("derives the type URI from the code, so it resolves to a docs anchor", () => {
     const { body } = capture(new CrossTenantTokenError());
     expect(body?.type).toBe(`${BASE}#cross-tenant-token`);
+  });
+
+  /**
+   * A 429 carries two headers beyond the body, and both are specified rather than stylistic, which is
+   * why they are asserted here rather than trusted to the guard that raises the error.
+   */
+  describe("rate limit responses", () => {
+    it("map to 429 with the documented code", () => {
+      const { status, body } = capture(new TooManyRequestsError(5_000));
+      expect(status).toBe(429);
+      expect(body?.code).toBe("TOO_MANY_REQUESTS");
+    });
+
+    // RFC 9110 s10.2.3: delay-seconds is a non-negative integer, so no fraction and no minus sign.
+    it("send Retry-After as a non-negative integer number of seconds", () => {
+      const { headers } = capture(new TooManyRequestsError(4_200));
+      expect(headers["retry-after"]).toBe("5");
+      expect(headers["retry-after"]).toMatch(/^\d+$/);
+    });
+
+    // Rounded up and floored at 1: "0" would tell a client to retry immediately, which is the opposite
+    // of what a rate limit means.
+    it("never send Retry-After: 0", () => {
+      for (const ms of [0, 1, 200, -100]) {
+        expect(capture(new TooManyRequestsError(ms)).headers["retry-after"]).toBe("1");
+      }
+    });
+
+    /**
+     * RFC 6585 s4: a 429 "MUST NOT be stored by a cache". Without this a shared cache could hand the
+     * rejection to callers who are within their limit, or keep serving it after the window passed.
+     */
+    it("forbid caching", () => {
+      expect(capture(new TooManyRequestsError(1_000)).headers["cache-control"]).toBe("no-store");
+    });
+
+    // Only on a 429. A Retry-After on an unrelated error would tell clients to back off from something
+    // that retrying will never fix.
+    it("do not leak those headers onto other errors", () => {
+      const { headers } = capture(new TenantNotFoundError("acme"));
+      expect(headers["retry-after"]).toBeUndefined();
+      expect(headers["cache-control"]).toBeUndefined();
+    });
+  });
+
+  describe("control-plane rejections", () => {
+    it("map to 401 with a code a client can branch on", () => {
+      const { status, body } = capture(new ControlPlaneUnauthorizedError());
+      expect(status).toBe(401);
+      expect(body?.code).toBe("CONTROL_PLANE_UNAUTHORIZED");
+    });
+
+    // The type URI has to resolve to a real heading in docs/problems.md, or RFC 9457's promise that
+    // dereferencing it yields documentation is false.
+    it("point their type URI at the documented anchor", () => {
+      const { body } = capture(new ControlPlaneUnauthorizedError());
+      expect(body?.type).toMatch(/#control-plane-unauthorized$/);
+    });
   });
 
   describe("validation failures", () => {

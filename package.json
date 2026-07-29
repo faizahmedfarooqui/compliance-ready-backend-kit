@@ -37,6 +37,7 @@
     "infra:down": "docker compose down",
     "infra:reset": "docker compose down -v && docker compose up -d",
     "smoke": "./scripts/smoke-test.sh",
+    "smoke:slowloris": "node scripts/slowloris-probe.mjs",
     "clean:test-tenants": "./scripts/clean-test-tenants.sh"
   },
   "devDependencies": {
@@ -53,7 +54,8 @@
   },
   "pnpm": {
     "overrides": {
-      "find-my-way@9": "^9.7.0"
+      "find-my-way@9": "^9.7.0",
+      "js-yaml@5": "^5.2.2"
     },
     "auditConfig": {
       "ignoreGhsas": [

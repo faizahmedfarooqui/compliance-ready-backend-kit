@@ -8,6 +8,7 @@ import {
 import { TenantContextService } from "../tenancy/tenant-context.service";
 import { PasswordService } from "./password.service";
 import { TokenService } from "./token.service";
+import { LoginThrottleService } from "./login-throttle.service";
 
 /** Prisma's unique-constraint violation. */
 const UNIQUE_VIOLATION = "P2002";
@@ -29,6 +30,7 @@ export class AuthService {
     private readonly tenantCtx: TenantContextService,
     private readonly passwords: PasswordService,
     private readonly tokens: TokenService,
+    private readonly throttle: LoginThrottleService,
   ) {}
 
   /**
@@ -53,7 +55,18 @@ export class AuthService {
     }
   }
 
-  async login(email: string, password: string): Promise<{ accessToken: string }> {
+  /**
+   * Verify credentials and issue an access token.
+   *
+   * The throttle check comes FIRST, before the user lookup and before any hashing. Ordering it after
+   * would mean a throttled attacker still triggered a database read and a deliberately expensive
+   * Argon2id verification on every rejected request, which turns the control into the thing that pays
+   * for the attack. See LoginThrottleService for what the two counters cover.
+   */
+  async login(email: string, password: string, ip: string): Promise<{ accessToken: string }> {
+    const tenantId = this.tenantCtx.tenant.id;
+    await this.throttle.assertWithinLimits(tenantId, email, ip);
+
     const user = await this.tenantCtx.db.user.findUnique({
       where: { email: normaliseEmail(email) },
     });
@@ -62,18 +75,24 @@ export class AuthService {
     // which addresses are registered, then fail identically either way.
     if (user?.status !== "active") {
       await this.passwords.verifyAgainstDecoy(password);
+      await this.throttle.recordFailure(tenantId, email, ip);
       throw new InvalidCredentialsError();
     }
     if (!(await this.passwords.verify(user.passwordHash, password))) {
+      await this.throttle.recordFailure(tenantId, email, ip);
       throw new InvalidCredentialsError();
     }
+
+    // Only now, with the password proven, is the account's failure count cleared. Doing it any earlier
+    // would let a failed attempt reset the counter it is supposed to increment.
+    await this.throttle.recordSuccess(tenantId, email);
 
     await this.upgradeHashIfStale(user.id, user.passwordHash, password);
 
     const { roles, permissions } = await this.loadAuthz(user.id);
     const claims: AccessTokenClaims = {
       sub: user.id,
-      tid: this.tenantCtx.tenant.id,
+      tid: tenantId,
       roles,
       permissions,
     };

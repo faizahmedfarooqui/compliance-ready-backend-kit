@@ -153,25 +153,91 @@ Database-per-tenant would have routed the query to the right database, so no dat
 crossed; this rejects the caller acting inside a tenant they hold no account in. See the token
 section of the README.
 
+### `forbidden`
+
+`FORBIDDEN` · **403**
+
+The caller is authenticated, and is not allowed to do this. Raised by the RBAC guard when the token
+carries no `permissions` entry matching what the route requires.
+
+**403, not 404.** Hiding the existence of a route the caller cannot use would be defensible for a
+resource whose existence is itself sensitive; here the routes are published in the OpenAPI document, so
+a 404 would only make a legitimate integrator's permission problem harder to diagnose.
+
+**Permissions come from the token, not from a live lookup.** They are baked in when the token is
+signed, so a permission revoked mid-session remains usable until the token expires (15 minutes by
+default). That is the standard trade for stateless tokens, and if your access review requires immediate
+revocation you need a per-request check or a revocation list.
+
+Until v0.2 this response carried `code: "HTTP_403"` and a `type` URI pointing at `#http-403`, a heading
+that has never existed, so the one promise RFC 9457 makes about `type` was broken for the most common
+authorization failure in the kit. The smoke test now asserts that every code the OpenAPI document
+mentions has a section here, which is what surfaced it.
+
 ### `route-not-found`
 
 `ROUTE_NOT_FOUND` · **404**
 
 No route matches that method and path.
 
+### `control-plane-unauthorized`
+
+`CONTROL_PLANE_UNAUTHORIZED` · **401**
+
+A control-plane route was called without a valid credential. Present it as
+`Authorization: Bearer <CONTROL_PLANE_API_KEY>`.
+
+Today the only such route is `POST /api/tenants`, which creates a database. It was unauthenticated
+until v0.2, guarded by nothing but a source comment asking people not to expose it.
+
+**One error for every cause.** A missing header, a wrong key, and a key sent without the `Bearer`
+scheme all produce exactly this response. Separating them would tell someone probing the endpoint
+whether it is protected at all and whether their header shape was accepted, which is two free
+observations while guessing a credential.
+
+The comparison is constant-time over the credential itself, after an explicit length check. The length
+is deliberately not protected, because it is not a secret: the config schema fixes it at 43 base64url
+characters and `.env.example` publishes that, so rejecting a wrong-length credential early tells a
+caller only what the documentation already does. What is constant-time is the comparison of two values
+of the correct length, which is where guessing the content would otherwise leak a prefix at a time.
+
+The credential authenticates the **bearer**, not a person: it cannot say which operator called. See
+`controlPlaneApiKey` in `packages/config` for why that is a documented stepping stone rather than a
+finished design.
+
 ### `too-many-requests`
 
 `TOO_MANY_REQUESTS` · **429**
 
-Reserved, and **not yet emitted**: rate limiting is not implemented (see COMPLIANCE.md). The code
-and title exist in the filter so that the contract is settled before the control lands, and this
-section exists so the `type` URI is not a link to a heading that does not exist. The smoke test
-asserts every emitted code has a section here, which is why a reserved code needs one too.
+A rate limit was exceeded. Emitted by two different controls, and the body deliberately does not say
+which:
 
-When it does land, the response will carry a `Retry-After` header. Two details worth stating now,
-because both are easy to get wrong: RFC 6585 §4 makes `Retry-After` on a 429 a **MAY** rather than
-a requirement, and RFC 9110 §10.2.3 defines `delay-seconds` as a non-negative **integer**, so a
-fractional or negative value is malformed. Responses with 429 also MUST NOT be cached.
+- **The per-client request budget**, applied to every route. `RATE_LIMIT_DEFAULT_LIMIT` per
+  `RATE_LIMIT_DEFAULT_WINDOW_MS`, plus a stricter budget on routes that declare one (`/auth/login`,
+  `/auth/register`, `POST /tenants`).
+- **Login throttling**, which counts failed logins per account and per source address. Failures only,
+  cleared on a successful login, so ordinary use never approaches it.
+
+The response carries:
+
+- **`Retry-After`**, in seconds. RFC 6585 §4 makes this a **MAY** rather than a requirement, and RFC
+  9110 §10.2.3 defines `delay-seconds` as a non-negative **integer**, so the value is rounded up and
+  floored at 1: a sub-second wait must not serialise as `0`, which would tell a client to retry at once.
+- **`Cache-Control: no-store`**, because RFC 6585 §4 says a 429 "MUST NOT be stored by a cache". A
+  shared cache replaying one would hand a 429 to callers who are within their limit, or keep serving it
+  after the window has passed.
+- **`X-RateLimit-Limit`** and **`X-RateLimit-Remaining`** on every response, not just this one. The
+  `RateLimit` and `RateLimit-Policy` fields from draft-ietf-httpapi-ratelimit-headers are the better
+  design, but they are still an Internet-Draft and this kit does not claim conformance to unpublished
+  specifications.
+
+`X-RateLimit-Degraded: true` appears instead when the limiter could not reach Redis. The request was
+served without being counted (see `RATE_LIMIT_FAIL_OPEN`), and there is no honest limit or remaining
+count to report, so neither is sent.
+
+**Why the detail says nothing specific.** On the login route, distinguishing "this account is
+throttled" from "this address is throttled" would confirm that the named account exists, which is the
+same disclosure `invalid-credentials` exists to prevent.
 
 ### `internal-error`
 
