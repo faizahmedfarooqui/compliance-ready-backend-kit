@@ -66,7 +66,7 @@ export function setupOpenApi(app: NestFastifyApplication, config: AppConfig): vo
           "claims carry the tenant id, user id, roles and permissions.",
           "",
           "**Most routes need a tenant.** Users live in their tenant's own database, so the service must",
-          `know which database before it can touch them. Send \`${TENANT_HEADER}\` with a slug or a uuid.`,
+          `know which database to use before it can touch them. Send \`${TENANT_HEADER}\` with a slug or a uuid.`,
           "",
           "Error catalogue: [docs/problems.md](https://github.com/faizahmedfarooqui/compliance-ready-backend-kit/blob/main/docs/problems.md).",
         ].join("\n"),

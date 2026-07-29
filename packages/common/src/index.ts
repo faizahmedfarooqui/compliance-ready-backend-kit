@@ -298,19 +298,6 @@ export class ValidationFailedError extends DomainError {
 }
 
 /**
- * The caller has exceeded a rate limit. Maps to 429.
- *
- * Carries `retryAfterSeconds` because the number has to survive the trip to the exception filter,
- * which is what writes the `Retry-After` header. Rounded UP to a whole second and floored at 1 by the
- * constructor rather than by the caller: RFC 9110 §10.2.3 defines `delay-seconds` as a non-negative
- * integer, so `Retry-After: 0.4` is malformed, and a rounded-down 0 tells a client to retry
- * immediately, which is precisely the opposite of the message.
- *
- * The detail deliberately does not say WHICH limit was hit or how many attempts remain. On the login
- * route that would confirm to an attacker that an account exists and is worth continuing against,
- * which is the same reasoning that makes InvalidCredentialsError say nothing.
- */
-/**
  * A control-plane route was called without a valid credential. Maps to 401.
  *
  * One error for "no key" and "wrong key" on purpose. Separate messages would tell a prober whether
@@ -327,6 +314,19 @@ export class ControlPlaneUnauthorizedError extends DomainError {
   }
 }
 
+/**
+ * The caller has exceeded a rate limit. Maps to 429.
+ *
+ * Carries `retryAfterSeconds` because the number has to survive the trip to the exception filter,
+ * which is what writes the `Retry-After` header. Rounded UP to a whole second and floored at 1 by the
+ * constructor rather than by the caller: RFC 9110 §10.2.3 defines `delay-seconds` as a non-negative
+ * integer, so `Retry-After: 0.4` is malformed, and a rounded-down 0 tells a client to retry
+ * immediately, which is precisely the opposite of the message.
+ *
+ * The detail deliberately does not say WHICH limit was hit or how many attempts remain. On the login
+ * route that would confirm to an attacker that an account exists and is worth continuing against,
+ * which is the same reasoning that makes InvalidCredentialsError say nothing.
+ */
 export class TooManyRequestsError extends DomainError {
   readonly retryAfterSeconds: number;
 

@@ -57,7 +57,15 @@ export class JwksController {
                   crv: { type: "string", example: "P-256" },
                   x: { type: "string" },
                   y: { type: "string" },
-                  kid: { type: "string", format: "uuid" },
+                  // NOT format: uuid, even though every kid this kit generates today happens to be
+                  // one. RFC 7517 s4.5 defines kid as an arbitrary case-sensitive string, which is why
+                  // config_keys stores it as TEXT rather than uuid: a uuid column turns a hostile
+                  // non-uuid kid into a Postgres 22P02 error, so a 500 where a 401 belongs. Publishing
+                  // format: uuid would contradict that decision in the one document other systems
+                  // actually consume, and a generated client or validator would then reject a perfectly
+                  // valid JWKS. That is not hypothetical: a KMS or HSM KeyProvider adapter is on the
+                  // roadmap and would supply key ids of its own choosing.
+                  kid: { type: "string", example: "9f1c2b7e-4d3a-4b8f-9e2c-5a6d7f8b9c01" },
                   alg: { type: "string", example: "ES256" },
                   use: { type: "string", example: "sig" },
                 },
