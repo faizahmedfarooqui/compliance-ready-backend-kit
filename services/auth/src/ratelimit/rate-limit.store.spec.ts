@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Redis } from "ioredis";
 import type { AppConfig } from "@compliance-kit/config";
-import { RateLimitStore, newMemberIdFactory } from "./rate-limit.store";
+import { RateLimitStore, newMemberIdFactory, type RateLimitResult } from "./rate-limit.store";
 
 /**
  * The member id is the whole subject here, because getting it wrong fails in the one direction nobody
@@ -169,5 +169,86 @@ describe("RateLimitStore member ids", () => {
       const store = new RateLimitStore(failing(), CONFIG);
       await expect(store.reset("k")).resolves.toBeUndefined();
     });
+  });
+});
+
+/**
+ * Header behaviour when a route carries its own budget, so `setHeaders` runs twice.
+ *
+ * Exercised through a hand-built reply rather than the guard, because what is being pinned is the
+ * interaction between the two calls: whichever order they happen in, the response must never claim a
+ * budget was checked when one of the two was not.
+ */
+describe("rate-limit headers across two checks", () => {
+  function reply() {
+    const headers = new Map<string, string>();
+    return {
+      obj: {
+        header: (n: string, v: string) => headers.set(n, v),
+        removeHeader: (n: string) => headers.delete(n),
+        getHeader: (n: string) => headers.get(n),
+      },
+      get: (n: string) => headers.get(n),
+    };
+  }
+
+  /** The guard's private setHeaders, replicated so the ordering rule can be asserted directly. */
+  function setHeaders(r: ReturnType<typeof reply>["obj"], result: RateLimitResult): void {
+    if (result.degraded) {
+      r.removeHeader("x-ratelimit-limit");
+      r.removeHeader("x-ratelimit-remaining");
+      r.header("x-ratelimit-degraded", "true");
+      return;
+    }
+    if (r.getHeader("x-ratelimit-degraded") !== undefined) return;
+    r.header("x-ratelimit-limit", String(result.limit));
+    r.header("x-ratelimit-remaining", String(Math.max(0, result.limit - result.count)));
+  }
+
+  const ok = (limit: number, count: number): RateLimitResult => ({
+    allowed: true,
+    count,
+    limit,
+    retryAfterMs: 0,
+    degraded: false,
+  });
+  const degraded = (): RateLimitResult => ({
+    allowed: true,
+    count: 0,
+    limit: 0,
+    retryAfterMs: 0,
+    degraded: true,
+  });
+
+  it("reports the tighter budget when neither check degraded", () => {
+    const r = reply();
+    setHeaders(r.obj, ok(100, 1)); // global
+    setHeaders(r.obj, ok(20, 1)); // route
+    expect(r.get("x-ratelimit-limit")).toBe("20");
+    expect(r.get("x-ratelimit-degraded")).toBeUndefined();
+  });
+
+  // A response carrying both a budget and the degraded flag says a limit was checked when it was not.
+  it("removes a budget set by the global check if the route check degrades", () => {
+    const r = reply();
+    setHeaders(r.obj, ok(100, 1));
+    setHeaders(r.obj, degraded());
+    expect(r.get("x-ratelimit-degraded")).toBe("true");
+    expect(r.get("x-ratelimit-limit")).toBeUndefined();
+    expect(r.get("x-ratelimit-remaining")).toBeUndefined();
+  });
+
+  /**
+   * The sticky case, and the reason this is not simply "clear the flag on success". If the global check
+   * degraded, that budget was never consulted, so the request was partly unmetered no matter how the
+   * second check went. Reporting a clean limit here would round a security signal in the flattering
+   * direction.
+   */
+  it("keeps the degraded flag when a later check succeeds, rather than overstating enforcement", () => {
+    const r = reply();
+    setHeaders(r.obj, degraded()); // global could not be checked
+    setHeaders(r.obj, ok(20, 1)); // route was
+    expect(r.get("x-ratelimit-degraded")).toBe("true");
+    expect(r.get("x-ratelimit-limit")).toBeUndefined();
   });
 });

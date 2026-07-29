@@ -96,8 +96,8 @@ as a control you still have to provide some other way.
 
 - **Control-plane authorization.** `POST /api/tenants` creates a database. It was unauthenticated
   until v0.2, guarded by nothing but a source comment. It now requires
-  `Authorization: Bearer <CONTROL_PLANE_API_KEY>`, compared in constant time over a digest of both
-  sides so a wrong-length credential is a 401 rather than a crash.
+  `Authorization: Bearer <CONTROL_PLANE_API_KEY>`, compared in constant time after an explicit length
+  check, so a wrong-length credential is a 401 rather than the crash `timingSafeEqual` would raise.
 
   Honest limitation, and it matters for an access-review question: this authenticates the **bearer**,
   not a person. It cannot say WHICH operator provisioned a tenant, cannot be scoped to one action, and

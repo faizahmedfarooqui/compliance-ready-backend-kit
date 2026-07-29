@@ -63,9 +63,13 @@ export class RateLimitGuard implements CanActivate {
     ]);
     if (route) {
       // Keyed by the route, so a strict budget on one endpoint is not consumed by traffic to another.
-      // `routerPath` is the route PATTERN ("/api/tenants/:id"), not the resolved URL, so an attacker
-      // cannot mint unlimited buckets by varying a path parameter.
-      const pattern = request.routeOptions?.url ?? request.url;
+      // `routeOptions.url` is the route PATTERN ("/api/tenants/:id"), not the resolved URL, so an
+      // attacker cannot mint unlimited buckets by varying a path parameter.
+      //
+      // The fallback has to drop the query string. `request.url` includes it, so `?x=1`, `?x=2` and so
+      // on would each be a distinct key: unbounded Redis keys, and a per-route budget that resets on
+      // every cache-busting parameter, which turns the strictest limits in the kit into no limit.
+      const pattern = request.routeOptions?.url ?? request.url.split("?")[0];
       const scoped = await this.store.consume(
         `rl:route:${request.method}:${pattern}:${client}`,
         route.limit,
@@ -106,12 +110,32 @@ export class RateLimitGuard implements CanActivate {
    * not been published. The X- names are what clients and gateways actually parse today.
    */
   private setHeaders(reply: FastifyReply, result: RateLimitResult): void {
-    // Nothing truthful to report when the limiter could not reach Redis. Sending limit and remaining
-    // anyway would state a budget that was never checked.
+    /**
+     * This runs TWICE on a route with its own budget, so the two branches have to undo each other or
+     * the response ends up carrying both a budget and the degraded flag. That combination contradicts
+     * docs/problems.md and, worse, tells a client a limit was checked when it was not.
+     */
     if (result.degraded) {
+      // Nothing truthful to report: sending limit and remaining would state a budget that was never
+      // checked. Remove any an earlier check already set.
+      reply.removeHeader("x-ratelimit-limit");
+      reply.removeHeader("x-ratelimit-remaining");
       reply.header("x-ratelimit-degraded", "true");
       return;
     }
+
+    /**
+     * DEGRADATION IS STICKY, and this is a deliberate departure from the obvious fix of clearing the
+     * flag whenever a check succeeds.
+     *
+     * If the global check degraded and the route check then succeeded, the request really was partly
+     * unmetered: one of the two budgets was never consulted. Clearing the flag because the second check
+     * worked would report full enforcement of something half enforced, which is the direction a
+     * security signal must never round in. So once anything degrades, the response says so and carries
+     * no figures.
+     */
+    if (reply.getHeader("x-ratelimit-degraded") !== undefined) return;
+
     reply.header("x-ratelimit-limit", String(result.limit));
     reply.header("x-ratelimit-remaining", String(Math.max(0, result.limit - result.count)));
   }

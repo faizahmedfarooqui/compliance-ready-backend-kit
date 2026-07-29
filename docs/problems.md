@@ -193,8 +193,13 @@ until v0.2, guarded by nothing but a source comment asking people not to expose 
 **One error for every cause.** A missing header, a wrong key, and a key sent without the `Bearer`
 scheme all produce exactly this response. Separating them would tell someone probing the endpoint
 whether it is protected at all and whether their header shape was accepted, which is two free
-observations while guessing a credential. The comparison itself is constant-time over a digest of both
-sides, so response timing does not reveal the length or content of what was presented either.
+observations while guessing a credential.
+
+The comparison is constant-time over the credential itself, after an explicit length check. The length
+is deliberately not protected, because it is not a secret: the config schema fixes it at 43 base64url
+characters and `.env.example` publishes that, so rejecting a wrong-length credential early tells a
+caller only what the documentation already does. What is constant-time is the comparison of two values
+of the correct length, which is where guessing the content would otherwise leak a prefix at a time.
 
 The credential authenticates the **bearer**, not a person: it cannot say which operator called. See
 `controlPlaneApiKey` in `packages/config` for why that is a documented stepping stone rather than a
