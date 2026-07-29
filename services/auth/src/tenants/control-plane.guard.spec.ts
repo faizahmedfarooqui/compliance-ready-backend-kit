@@ -68,9 +68,9 @@ describe("ControlPlaneGuard", () => {
 
     /**
      * A length mismatch must REJECT rather than throw something else. `timingSafeEqual` raises on
-     * buffers of unequal length, so comparing raw inputs would turn a short key into a 500 and leak the
-     * expected length through the difference between that and a 401. Hashing both sides first is what
-     * makes these ordinary rejections.
+     * buffers of unequal length, so reaching it with a short or overlong credential would turn a 401
+     * into a 500. The guard checks the length first, which is safe because the required length is
+     * public: the config schema fixes it and .env.example publishes it.
      */
     it.each([
       ["a truncated key", KEY.slice(0, 10)],
@@ -112,10 +112,11 @@ describe("ControlPlaneGuard", () => {
   });
 
   /**
-   * The configured key cannot be empty, because an empty string would compare equal to an empty
-   * presented credential and open the route to a caller sending `Authorization: Bearer` with nothing
-   * after it. Config enforces 256 bits so this state is unreachable in a running service; asserted here
-   * because the guard is the thing that would be exploited if that ever changed.
+   * The configured key cannot be empty, because two empty buffers are equal length and compare equal,
+   * which would open the route to a caller sending `Authorization: Bearer` with nothing after it. Config
+   * enforces 256 bits so this state is unreachable in a running service; asserted here because the guard
+   * is what would be exploited if that ever changed. Note the bearer parser also refuses a credential
+   * that is only whitespace, so there are two independent reasons this cannot happen.
    */
   it("cannot be satisfied by an empty credential even if one were configured", () => {
     expect(() => guard("").canActivate(context("Bearer "))).toThrow(ControlPlaneUnauthorizedError);

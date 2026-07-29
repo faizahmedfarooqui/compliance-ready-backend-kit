@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 import { CanActivate, ExecutionContext, Inject, Injectable, Logger } from "@nestjs/common";
 import type { FastifyRequest } from "fastify";
 import { ControlPlaneUnauthorizedError } from "@compliance-kit/common";
@@ -23,8 +23,8 @@ export class ControlPlaneGuard implements CanActivate {
   private readonly expected: Buffer;
 
   constructor(@Inject(CONFIG) config: AppConfig) {
-    // Digested once at construction. See `matches` for why both sides are hashed.
-    this.expected = sha256(config.controlPlaneApiKey);
+    // Decoded once at construction rather than per request. See `matches` for the comparison.
+    this.expected = Buffer.from(config.controlPlaneApiKey, "utf8");
   }
 
   canActivate(context: ExecutionContext): boolean {
@@ -44,23 +44,30 @@ export class ControlPlaneGuard implements CanActivate {
   }
 
   /**
-   * Constant-time comparison, via a digest of both sides.
+   * Constant-time comparison of the credential.
    *
-   * `timingSafeEqual` THROWS when the two buffers differ in length, so calling it on raw inputs both
-   * crashes on a wrong-length key and leaks the expected length through the difference between a 500
-   * and a 401. Hashing first makes both operands exactly 32 bytes, so the comparison is always
-   * well-formed and its duration reveals nothing about the length or content of what was presented.
+   * `timingSafeEqual` THROWS when its two buffers differ in length, so a wrong-length credential must
+   * be handled before it is called or it becomes a 500 instead of a 401.
    *
-   * The digest is not there to protect the key, which is high-entropy and already secret. It is there
-   * to normalise the length.
+   * An early length check is the right way to do that, because THE LENGTH IS NOT A SECRET. The config
+   * schema fixes the credential at 43 base64url characters and `.env.example` publishes that, so
+   * returning early on a mismatch tells an attacker only what the documentation already does. What must
+   * be constant-time is the comparison of two values of the RIGHT length, since that is where guessing
+   * the content would otherwise leak a prefix at a time.
+   *
+   * This used to digest both sides with SHA-256 to normalise the length, on the theory that the length
+   * needed hiding. It did not, and the digest bought nothing: 256 bits of randomness is not
+   * brute-forcible whatever the hash speed, and nothing was stored to attack offline. It also drew a
+   * CodeQL `js/insufficient-password-hash` alert, which is wrong about the threat here but right that a
+   * bare SHA-256 next to a credential deserves an explanation. Removing it is simpler than explaining
+   * it, and Argon2 would have been the genuinely bad fix: a deliberate ~100ms of CPU on every
+   * control-plane request, which is the amplifier this route is rate limited to avoid.
    */
   private matches(presented: string): boolean {
-    return timingSafeEqual(sha256(presented), this.expected);
+    const candidate = Buffer.from(presented, "utf8");
+    if (candidate.length !== this.expected.length) return false;
+    return timingSafeEqual(candidate, this.expected);
   }
-}
-
-function sha256(value: string): Buffer {
-  return createHash("sha256").update(value, "utf8").digest();
 }
 
 /**
