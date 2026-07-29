@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import type { AppConfig } from "@compliance-kit/config";
@@ -120,10 +121,42 @@ interface WindowCommand {
   peekWindow(key: string, window: string): Promise<[number, number]>;
 }
 
+/**
+ * Builds unique event ids for the sorted-set members.
+ *
+ * Random rather than derived from anything about the host, because everything identifying about a host
+ * is either shared or reused. `process.pid` was the original choice and it is actively wrong in a
+ * container: PID 1 is what a containerised process gets, so every replica and every restart produced
+ * the same value. Hostname has the same problem behind a scheduler that reuses names, and a start
+ * timestamp collides whenever replicas boot together, which is exactly what a rolling deploy does.
+ *
+ * 64 bits of randomness to separate processes, plus a monotonic counter so collisions WITHIN a process
+ * are impossible rather than merely unlikely. See `consume` for what a collision would cost.
+ */
+export function newMemberIdFactory(): () => string {
+  const instanceId = randomBytes(8).toString("base64url");
+  let counter = 0;
+  return () => {
+    counter += 1;
+    return `${instanceId}:${counter}`;
+  };
+}
+
+/**
+ * One factory for the whole process, shared by every store in it.
+ *
+ * Module scope on purpose. Held per store instead, the guarantee would quietly depend on there being
+ * exactly one RateLimitStore per process: two would each start a counter at zero. Nest constructs one
+ * today, so that could not bite yet, and "could not bite yet" is how the pid version survived too.
+ *
+ * Exported as a factory so a test can build a SECOND one and assert the two never collide. That is what
+ * a replica or a restart is, and it cannot be reached with one shared module-level constant.
+ */
+const nextMemberId = newMemberIdFactory();
+
 @Injectable()
 export class RateLimitStore {
   private readonly logger = new Logger(RateLimitStore.name);
-  private counter = 0;
 
   constructor(
     @Inject(REDIS) private readonly redis: Redis,
@@ -165,11 +198,28 @@ export class RateLimitStore {
    * every route, so a Redis failure resolves to the configured fail-open policy and is logged.
    */
   async consume(key: string, limit: number, windowMs: number): Promise<RateLimitResult> {
-    // Unique per event so two events in the same millisecond are two members rather than one
-    // overwriting the other. A sorted set is keyed by member, and a plain timestamp would collide
-    // under precisely the burst this is meant to catch, silently undercounting it.
-    this.counter += 1;
-    const member = `${process.pid}:${this.counter}`;
+    /**
+     * The member has to be unique across EVERY process that shares this Redis, not just within this
+     * one, and getting that wrong fails silently in the worst direction.
+     *
+     * A sorted set is keyed by its member: `ZADD` on a member that already exists UPDATES its score and
+     * returns 0 rather than adding a second entry, so `ZCARD` does not grow. A repeated member is
+     * therefore an event that is not counted, and the limiter permits more than it says while looking
+     * healthy from the outside.
+     *
+     * This was `${process.pid}:${counter}`, which is unique within one process and nowhere near unique
+     * outside it. A containerised process gets PID 1, and the counter restarts at 1, so every replica
+     * and every restart replayed the identical sequence `1:1`, `1:2`, `1:3`. Two replicas behind a load
+     * balancer would then overwrite each other's entries continuously: with the same client's requests
+     * spread across them, most events after the first from each index would not be counted at all. Not
+     * an edge case, and not limited to restarts, which is how it survived a review of the comment that
+     * claimed the member was unique.
+     *
+     * A random per-process id plus a monotonic counter fixes both halves at once: the counter makes
+     * collisions within a process impossible rather than improbable, so the randomness only has to
+     * separate processes, and 64 bits does that with room to spare.
+     */
+    const member = nextMemberId();
 
     try {
       const client = this.redis as unknown as WindowCommand;
