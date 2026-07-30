@@ -71,6 +71,7 @@ export class ConnectionManager {
   readonly master: MasterDb;
   private readonly tenantCache = new Map<TenantId, { pool: Pool; db: TenantDb }>();
   private tenantDdl: string | undefined;
+  private auditImmutabilityDdl: string | undefined;
 
   constructor(private readonly opts: ManagerOptions) {
     this.masterPool = this.createPool(opts.masterUrl, "master");
@@ -206,6 +207,27 @@ export class ConnectionManager {
     return this.tenantDdl;
   }
 
+  /**
+   * Append-only enforcement for the tenant's audit log.
+   *
+   * A SEPARATE file from the generated schema, and it has to be. `prisma migrate diff` renders what the
+   * Prisma schema can express, and triggers, functions and REVOKE are not among those things, so the
+   * generated DDL creates the audit table with no protection on it whatsoever. Regenerating that file
+   * would also discard anything appended to it by hand, which is why this is not appended.
+   *
+   * The consequence worth stating: a tenant provisioned WITHOUT this step has an audit table that
+   * accepts UPDATE and DELETE, so its log is ordinary rows that happen to carry hashes. That is why it
+   * runs in the same transaction as the schema, below, rather than as a follow-up step that could fail
+   * on its own and leave a tenant half protected.
+   */
+  private loadAuditImmutabilitySql(): string {
+    this.auditImmutabilityDdl ??= readFileSync(
+      path.resolve(__dirname, "..", "sql", "audit-immutability.sql"),
+      "utf8",
+    );
+    return this.auditImmutabilityDdl;
+  }
+
   /** Create the tenant database via a maintenance connection, if it does not exist. */
   private async createDatabase(databaseName: string): Promise<void> {
     const maintenanceUrl = new URL(this.opts.tenantClusterUrl);
@@ -241,6 +263,9 @@ export class ConnectionManager {
       await client.query("BEGIN");
 
       await client.query(this.loadTenantDdl());
+      // Immediately after the schema and inside the same transaction: an audit table without its
+      // triggers is not append-only, and a tenant must never exist in that state.
+      await client.query(this.loadAuditImmutabilitySql());
 
       // Permission catalogue. Values come from DEFAULT_PERMISSIONS so the seeded rows
       // and the keys checked by @TenantAuthenticated have a single source of truth.

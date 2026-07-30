@@ -4,6 +4,9 @@ CREATE SCHEMA IF NOT EXISTS "public";
 -- CreateEnum
 CREATE TYPE "user_status" AS ENUM ('active', 'disabled');
 
+-- CreateEnum
+CREATE TYPE "audit_actor_type" AS ENUM ('user', 'control_plane', 'system', 'anonymous');
+
 -- CreateTable
 CREATE TABLE "users" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -50,6 +53,24 @@ CREATE TABLE "user_roles" (
     CONSTRAINT "user_roles_pkey" PRIMARY KEY ("user_id","role_id")
 );
 
+-- CreateTable
+CREATE TABLE "audit_events" (
+    "seq" BIGSERIAL NOT NULL,
+    "occurred_at" TIMESTAMPTZ(6) NOT NULL,
+    "action" TEXT NOT NULL,
+    "actor_type" "audit_actor_type" NOT NULL,
+    "actor_id" TEXT,
+    "resource_type" TEXT,
+    "resource_id" TEXT,
+    "trace_id" TEXT,
+    "source_ip" TEXT,
+    "metadata" JSONB NOT NULL DEFAULT '{}',
+    "prev_hash" BYTEA NOT NULL,
+    "hash" BYTEA NOT NULL,
+
+    CONSTRAINT "audit_events_pkey" PRIMARY KEY ("seq")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
 
@@ -58,6 +79,18 @@ CREATE UNIQUE INDEX "roles_name_key" ON "roles"("name");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "permissions_key_key" ON "permissions"("key");
+
+-- CreateIndex
+CREATE INDEX "audit_events_resource_idx" ON "audit_events"("resource_type", "resource_id", "seq" DESC);
+
+-- CreateIndex
+CREATE INDEX "audit_events_action_idx" ON "audit_events"("action", "occurred_at" DESC);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "audit_events_prev_hash_unique" ON "audit_events"("prev_hash");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "audit_events_hash_unique" ON "audit_events"("hash");
 
 -- AddForeignKey
 ALTER TABLE "role_permissions" ADD CONSTRAINT "role_permissions_role_id_fkey" FOREIGN KEY ("role_id") REFERENCES "roles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
