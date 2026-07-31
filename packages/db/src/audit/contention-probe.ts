@@ -25,7 +25,7 @@ import { Client } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { GENESIS_HASH, computeAuditHash } from "@compliance-kit/crypto";
 import { PrismaClient } from "../generated/master/client";
-import { appendAuditEvent, type AuditChainClient } from "./audit-writer";
+import { appendAuditEvent } from "./audit-writer";
 
 function loadLocalDotenv(): void {
   if (process.env.NODE_ENV === "production") return;
@@ -125,7 +125,7 @@ async function main(): Promise<void> {
 
     const results = await Promise.allSettled(
       Array.from({ length: appends }, (_, i) =>
-        appendAuditEvent(prisma as unknown as AuditChainClient, {
+        appendAuditEvent(prisma, {
           action: "probe.concurrent",
           actorType: "system",
           actorId: `probe-${i}`,

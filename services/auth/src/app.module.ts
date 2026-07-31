@@ -8,6 +8,7 @@ import { HealthModule } from "./health/health.module";
 import { KeysModule } from "./keys/keys.module";
 import { RateLimitModule } from "./ratelimit/ratelimit.module";
 import { AuditModule } from "./audit/audit.module";
+import { RbacModule } from "./rbac/rbac.module";
 
 @Module({
   imports: [
@@ -18,6 +19,8 @@ import { AuditModule } from "./audit/audit.module";
     // After TenancyModule below is irrelevant: both are @Global, so ordering here only affects
     // guard registration, and AuditService resolves its tenant context per request.
     AuditModule,
+    // After AuditModule so the guard's dependency is registered before it is resolved at boot.
+    RbacModule,
     KeysModule,
     TenancyModule,
     AuthModule,

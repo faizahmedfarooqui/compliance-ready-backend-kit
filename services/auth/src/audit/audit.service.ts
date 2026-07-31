@@ -43,7 +43,33 @@ export class AuditService {
    * routes that emit tenant events all sit behind TenantGuard.
    */
   async tenantEvent(event: AppendAuditEvent): Promise<void> {
-    await this.append(this.tenantCtx.db, event, `tenant ${this.tenantCtx.tenant.slug}`);
+    /**
+     * Reading the tenant context is INSIDE the try, and that placement is the fix for a real bug.
+     *
+     * `tenantCtx.db` and `tenantCtx.tenant` throw TenantContextMissingError when no tenant was
+     * resolved. Evaluated as arguments to `append()` they threw BEFORE its try/catch, so this method
+     * documented as failing open could still throw, and the caller that most needs it not to is
+     * PermissionsGuard: a mis-ordered guard chain would have turned an intended 403 into a 400 about a
+     * missing tenant header, which is a confusing answer to "you lack this permission".
+     *
+     * Now a missing context is logged and swallowed like any other append failure, because the reason
+     * for failing open does not change with the reason for the failure.
+     */
+    let client: Parameters<typeof appendAuditEvent>[0];
+    let where: string;
+    try {
+      client = this.tenantCtx.db;
+      where = `tenant ${this.tenantCtx.tenant.slug}`;
+    } catch (err) {
+      this.logger.error(
+        `AUDIT APPEND FAILED: no tenant context, so the action proceeded UNRECORDED. ` +
+          `action=${event.action} actorType=${event.actorType} actorId=${event.actorId ?? "null"} ` +
+          `metadata=${JSON.stringify(event.metadata ?? {})}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+    await this.append(client, event, where);
   }
 
   /** Record an event on the deployment-wide control-plane chain. */
