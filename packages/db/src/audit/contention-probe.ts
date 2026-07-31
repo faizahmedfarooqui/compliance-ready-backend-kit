@@ -80,8 +80,10 @@ async function main(): Promise<void> {
 
   const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
   // A plain client for reading back, because the probe cannot clean up after itself: the table is
-  // append-only and the triggers refuse DELETE even for a superuser. It records where it started and
-  // verifies only its own rows instead.
+  // append-only and the triggers refuse DELETE even for a superuser. So it records where it started and
+  // verifies everything appended AFTER that point, which is its own rows plus anything another writer
+  // added in the meantime. Deliberately not filtered to its own: a chain is only verifiable as a
+  // contiguous run, and skipping another writer's rows would break the very links being checked.
   const admin = new Client({ connectionString: url });
 
   try {
@@ -159,10 +161,27 @@ async function main(): Promise<void> {
       [startSeq.toString()],
     );
 
-    if (rows.rowCount === appends) {
-      pass(`exactly ${appends} rows landed, so none was lost or duplicated`);
+    /**
+     * AT LEAST `appends`, not exactly.
+     *
+     * An exact count asserts the database is quiescent, which it is not: CI runs this step with the
+     * auth service still up, so any request that emits an audit event lands here too and would fail the
+     * probe while proving nothing. The count is not the fork-safety signal anyway. The unique-violation
+     * check is, and the chain walk below is, and both hold with other writers present because they
+     * follow the links rather than counting rows.
+     *
+     * A shortfall is still a failure: fewer rows than appends means an append reported success and did
+     * not land.
+     */
+    const landed = rows.rowCount ?? 0;
+    if (landed >= appends) {
+      const extra = landed - appends;
+      pass(
+        `all ${appends} appends landed` +
+          (extra > 0 ? `, alongside ${extra} row(s) from other writers, which is fine` : ""),
+      );
     } else {
-      fail(`expected ${appends} rows, found ${String(rows.rowCount)}`);
+      fail(`expected at least ${appends} rows after seq ${startSeq}, found ${String(landed)}`);
     }
 
     let expectedPrev: Buffer = GENESIS_HASH;
@@ -251,7 +270,15 @@ async function main(): Promise<void> {
 
 if (require.main === module) {
   main().catch((err: unknown) => {
-    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    /**
+     * Falls back to the whole error when the message is empty, which is not hypothetical: a Postgres
+     * that was simply not running produced an Error with an empty `message`, so this printed one bare
+     * newline and exited 1. A tool that fails with no explanation sends whoever runs it looking at the
+     * wrong thing, and this one is run when someone is already worried about their audit log.
+     */
+    const message = err instanceof Error && err.message ? err.message : String(err);
+    process.stderr.write(`${message || "failed with an empty error"}\n`);
+    if (err instanceof Error && err.stack && !err.message) process.stderr.write(`${err.stack}\n`);
     process.exitCode = 1;
   });
 }

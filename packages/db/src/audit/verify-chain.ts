@@ -253,11 +253,17 @@ async function main(): Promise<void> {
   }
 }
 
-export { readPage, toStored };
-
 if (require.main === module) {
   main().catch((err: unknown) => {
-    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    /**
+     * Falls back to the whole error when the message is empty, which is not hypothetical: a Postgres
+     * that was simply not running produced an Error with an empty `message`, so this printed one bare
+     * newline and exited 1. A tool that fails with no explanation sends whoever runs it looking at the
+     * wrong thing, and this one is run when someone is already worried about their audit log.
+     */
+    const message = err instanceof Error && err.message ? err.message : String(err);
+    process.stderr.write(`${message || "failed with an empty error"}\n`);
+    if (err instanceof Error && err.stack && !err.message) process.stderr.write(`${err.stack}\n`);
     process.exitCode = 1;
   });
 }
