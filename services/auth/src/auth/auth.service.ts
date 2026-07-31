@@ -9,6 +9,7 @@ import { TenantContextService } from "../tenancy/tenant-context.service";
 import { PasswordService } from "./password.service";
 import { TokenService } from "./token.service";
 import { LoginThrottleService } from "./login-throttle.service";
+import { AuditService } from "../audit/audit.service";
 
 /** Prisma's unique-constraint violation. */
 const UNIQUE_VIOLATION = "P2002";
@@ -31,6 +32,7 @@ export class AuthService {
     private readonly passwords: PasswordService,
     private readonly tokens: TokenService,
     private readonly throttle: LoginThrottleService,
+    private readonly audit: AuditService,
   ) {}
 
   /**
@@ -40,10 +42,20 @@ export class AuthService {
   async register(email: string, password: string): Promise<{ id: string; email: string }> {
     const passwordHash = await this.passwords.hash(password);
     try {
-      return await this.tenantCtx.db.user.create({
+      const created = await this.tenantCtx.db.user.create({
         data: { email: normaliseEmail(email), passwordHash },
         select: { id: true, email: true },
       });
+      // `system` rather than `user`: the account did not exist when the request arrived, so nobody was
+      // authenticated. Recording the new user as its own actor would imply it authorised its creation.
+      await this.audit.tenantEvent({
+        action: "user.registered",
+        actorType: "system",
+        resourceType: "user",
+        resourceId: created.id,
+        metadata: { email: created.email },
+      });
+      return created;
     } catch (err) {
       if (
         err instanceof tenantClient.Prisma.PrismaClientKnownRequestError &&
@@ -65,7 +77,20 @@ export class AuthService {
    */
   async login(email: string, password: string, ip: string): Promise<{ accessToken: string }> {
     const tenantId = this.tenantCtx.tenant.id;
-    await this.throttle.assertWithinLimits(tenantId, email, ip);
+    try {
+      await this.throttle.assertWithinLimits(tenantId, email, ip);
+    } catch (err) {
+      // Recorded because a throttle trip is the signal that someone is guessing, and it is the event an
+      // assessor asks for when reviewing whether brute force is detected. The email is metadata rather
+      // than actorId: there may be no such account, and claiming one as the actor would assert it exists.
+      await this.audit.tenantEvent({
+        action: "auth.login.throttled",
+        actorType: "anonymous",
+        sourceIp: ip,
+        metadata: { email: normaliseEmail(email) },
+      });
+      throw err;
+    }
 
     const user = await this.tenantCtx.db.user.findUnique({
       where: { email: normaliseEmail(email) },
@@ -76,10 +101,35 @@ export class AuthService {
     if (user?.status !== "active") {
       await this.passwords.verifyAgainstDecoy(password);
       await this.throttle.recordFailure(tenantId, email, ip);
+      /**
+       * One action name for "no such user" and "disabled account", matching what the RESPONSE says.
+       * A separate action per cause would put the account-enumeration answer the API refuses to give
+       * into the audit log, where a wider set of people can read it.
+       *
+       * The reason IS worth keeping, so it goes in metadata: an assessor reviewing failures needs to
+       * distinguish a disabled account being probed from an address that was never registered.
+       */
+      await this.audit.tenantEvent({
+        action: "auth.login.failed",
+        actorType: user ? "user" : "anonymous",
+        actorId: user ? user.id : null,
+        sourceIp: ip,
+        metadata: {
+          email: normaliseEmail(email),
+          reason: user ? "account_not_active" : "no_such_user",
+        },
+      });
       throw new InvalidCredentialsError();
     }
     if (!(await this.passwords.verify(user.passwordHash, password))) {
       await this.throttle.recordFailure(tenantId, email, ip);
+      await this.audit.tenantEvent({
+        action: "auth.login.failed",
+        actorType: "user",
+        actorId: user.id,
+        sourceIp: ip,
+        metadata: { email: normaliseEmail(email), reason: "wrong_password" },
+      });
       throw new InvalidCredentialsError();
     }
 
@@ -96,7 +146,24 @@ export class AuthService {
       roles,
       permissions,
     };
-    return { accessToken: await this.tokens.issue(claims) };
+    const accessToken = await this.tokens.issue(claims);
+
+    /**
+     * After the token is issued, so a failure to mint is not recorded as a successful login. The roles
+     * are recorded because "what could this session do" is the question an access review asks, and the
+     * token that carries them is encrypted and short-lived, so this row is the only durable answer.
+     */
+    await this.audit.tenantEvent({
+      action: "auth.login.succeeded",
+      actorType: "user",
+      actorId: user.id,
+      resourceType: "user",
+      resourceId: user.id,
+      sourceIp: ip,
+      metadata: { email: user.email, roles: roles.join(",") },
+    });
+
+    return { accessToken };
   }
 
   /**
