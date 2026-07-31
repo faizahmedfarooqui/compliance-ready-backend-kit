@@ -22,9 +22,13 @@
 #         { success, data, meta } for success
 #   16.   the published JWKS is a JWK Set carrying only public halves
 #   17.   the OpenAPI document describes the API as it actually behaves, including the envelope
+#   18.   the audit log recorded what the suite just did, and both chains verify from genesis
 #
-# Not covered here, because it needs a raw socket and takes as long as the request timeout:
-#   scripts/slowloris-probe.mjs, run as `pnpm smoke:slowloris`.
+# Not covered here, and each for a reason this script cannot meet:
+#   pnpm smoke:slowloris    needs a raw socket, and takes as long as the request timeout
+#   pnpm audit:contention   needs CONCURRENCY, which this suite has none of: it drives one request
+#                           at a time, so it can prove the audit writer works and nothing at all
+#                           about whether the advisory lock serialises competing appends
 #
 # Usage:
 #   docker compose up -d
@@ -612,6 +616,30 @@ done
 [ -z "$missing_docs" ] \
   && pass "every error code in the spec has a section in docs/problems.md" \
   || fail "codes documented in the spec but not in docs/problems.md:$missing_docs"
+
+step "18. The audit log recorded what just happened, and its chain verifies"
+# Asserted over the wire-adjacent path rather than by reading the table directly, because the point is
+# that the events the suite provoked actually landed. A chain that verifies while recording nothing is
+# the failure mode worth catching: `audit:verify` on an empty chain reports EMPTY, not OK.
+audit_out=$(cd "$REPO_ROOT" && pnpm --silent audit:verify --tenant "$TENANT_A" 2>&1 || true)
+printf '%s' "$audit_out" | grep -q "chain intact from genesis to head" \
+  && pass "tenant A's audit chain verifies from genesis to head" \
+  || fail "audit chain did not verify: $(printf '%s' "$audit_out" | tail -3)"
+
+# Not EMPTY: the suite logged in, registered and was denied, so events must exist.
+printf '%s' "$audit_out" | grep -q "EMPTY" \
+  && fail "audit chain is empty, so nothing the suite did was recorded" \
+  || pass "the chain is not empty, so the suite's actions were recorded"
+
+master_out=$(cd "$REPO_ROOT" && pnpm --silent audit:verify --master 2>&1 || true)
+printf '%s' "$master_out" | grep -q "chain intact from genesis to head" \
+  && pass "the control-plane chain verifies (tenant provisioning is recorded there)" \
+  || fail "control-plane chain did not verify: $(printf '%s' "$master_out" | tail -3)"
+
+# The head hash is what an operator records off-box, so it must actually be printed.
+printf '%s' "$master_out" | grep -qE "head hash: [0-9a-f]{64}" \
+  && pass "verify prints a 64-hex head hash, which is what gets anchored externally" \
+  || fail "no head hash in the verify output"
 
 step "Result"
 if [ "$FAILURES" -eq 0 ]; then
