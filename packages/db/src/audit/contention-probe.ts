@@ -59,8 +59,37 @@ interface EventRow {
 
 async function main(): Promise<void> {
   loadLocalDotenv();
+  /**
+   * Validated, not merely parsed, and matching what audit:verify does for --page-size.
+   *
+   * `Number("abc")` is NaN, and `Array.from({ length: NaN })` is an EMPTY array, so an unvalidated
+   * value made the probe fire nothing while announcing "Firing NaN concurrent appends" and printing
+   * PASS for both the unique-violation and the all-succeeded checks, since neither has anything to
+   * disagree with. A concurrency probe that reports success having run zero appends is the exact
+   * failure this file has already been fixed for twice, so it does not get a third variation.
+   *
+   * A missing value is rejected rather than silently defaulting to 50: someone who typed `--appends`
+   * meant to choose a number, and quietly picking one for them hides the typo.
+   */
   const argIndex = process.argv.indexOf("--appends");
-  const appends = Number(argIndex !== -1 ? (process.argv[argIndex + 1] ?? "50") : "50");
+  let appends = 50;
+  if (argIndex !== -1) {
+    const raw = process.argv[argIndex + 1];
+    if (raw === undefined || raw.startsWith("--")) {
+      process.stderr.write("--appends needs a positive integer, e.g. --appends 50\n");
+      process.exitCode = 1;
+      return;
+    }
+    appends = Number(raw);
+    if (!Number.isInteger(appends) || appends < 1) {
+      process.stderr.write(
+        `--appends must be a positive integer, got "${raw}". ` +
+          `A non-numeric or zero value would fire no appends and report success.\n`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+  }
 
   const url = process.env.MASTER_DATABASE_URL;
   if (!url) {
