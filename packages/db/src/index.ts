@@ -16,3 +16,10 @@ export {
 // the `Prisma` namespace when narrowing known request errors.
 export * as masterClient from "./generated/master/client";
 export * as tenantClient from "./generated/tenant/client";
+
+export {
+  appendAuditEvent,
+  type AppendAuditEvent,
+  type AppendedAuditEvent,
+  type AuditChainClient,
+} from "./audit/audit-writer";

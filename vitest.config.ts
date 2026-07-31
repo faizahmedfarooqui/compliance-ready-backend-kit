@@ -59,6 +59,10 @@ export default defineConfig({
          * This is an exclusion, not an admission that they are untested. Each one is executed for
          * real against a real Postgres in CI, which is the only place their behaviour means anything:
          *   - manage-keys.ts     the "Initialise token keys" and "Key rotation and revocation" steps
+         *   - verify-chain.ts    proved by tampering with a real chain and asserting each of the three
+         *                        break kinds is reported: altered field, removed event, missing genesis
+         *   - contention-probe.ts  50 concurrent appends against real Postgres, asserting the fork guard
+         *                        never fires
          *   - seed-tenant-admin.ts  step 4 of scripts/smoke-test.sh
          *   - decode-token.ts    steps 5, 6, 9 and 16 of scripts/smoke-test.sh
          *
@@ -70,6 +74,8 @@ export default defineConfig({
          * only make the percentage flatter.
          */
         "packages/db/src/keys/manage-keys.ts",
+        "packages/db/src/audit/verify-chain.ts",
+        "packages/db/src/audit/contention-probe.ts",
         "packages/db/src/keys/decode-token.ts",
         "packages/db/src/seed/**",
       ],

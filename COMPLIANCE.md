@@ -15,8 +15,8 @@ controls list, not a feature list.
 ## Control mapping
 
 **Read the Status column before anything else.** This table maps capabilities to controls; it
-does not assert that this repository implements all of them. Of the sixteen rows, **eight** are
-implemented, **three** are partial, **three** are not implemented at all, and **two** are
+does not assert that this repository implements all of them. Of the sixteen rows, **nine** are
+implemented, **three** are partial, **two** are not implemented at all, and **two** are
 deliberately outside this repository. An earlier version of this file listed thirteen rows with no
 status column, which read as a claim to all of them. Treat any row that does not say "Implemented"
 as a control you still have to provide some other way.
@@ -30,7 +30,7 @@ as a control you still have to provide some other way.
 | Input validation | **Implemented** | 164.312(c)(1) | Req 6 (6.2.4) | CC8.1 |
 | Vulnerability / dependency management | Partial | 164.308(a)(8); 164.308(a)(5)(ii)(B) | Req 6 (6.3.1-6.3.3); Req 11 (11.3) | CC7.1 |
 | Structured logging + monitoring (OpenTelemetry) | Partial | 164.312(b); 164.308(a)(1)(ii)(D) | Req 10 | CC7.2 |
-| Append-only audit logging | **Not implemented** | 164.312(b); 164.308(a)(1)(ii)(D) | Req 10 (10.2, 10.3.2) | CC7.2 |
+| Append-only audit logging (hash-chained) | **Implemented** | 164.312(b); 164.308(a)(1)(ii)(D) | Req 10 (10.2, 10.3.2) | CC7.2 |
 | Authentication (MFA / passkeys / WebAuthn) | **Not implemented** | 164.312(d) | Req 8 (8.4, 8.5) | CC6.1 |
 | Key management (envelope encryption, rotation, JWKS) | Partial | 164.312(a)(2)(iv) | Req 3 (3.6, 3.7, unverified) | CC6.1 |
 | Encryption at rest | **Not implemented** | 164.312(a)(2)(iv) | Req 3 (3.5, 3.5.1) | CC6.1 |
@@ -63,6 +63,47 @@ as a control you still have to provide some other way.
   and it means the control is satisfied outside this repository or not at all.
 
 ## Notes on the mappings
+
+- **Append-only audit logging.** A hash-chained log in every database that holds data: one chain per
+  tenant, plus a separate one in the master for control-plane events. Not one central chain, because a
+  shared chain would need a cross-database round trip on every audited write and could not be
+  serialised anyway, since Postgres advisory locks are per-database.
+
+  **The precise claim, because "immutable" would be an overclaim.** What is true is: *append-only as
+  enforced against the application role, and tamper-evident beyond that.* Three enforcement layers, all
+  verified by attempting to violate them rather than by inspection: row triggers refusing UPDATE and
+  DELETE, a statement trigger refusing TRUNCATE (row triggers do not fire for TRUNCATE at all, which
+  would otherwise leave one statement able to erase the log), and REVOKE of those privileges. Four CHECK
+  constraints pin the hash widths, the metadata shape, a non-empty action, and the actor pairing.
+  `UNIQUE(prev_hash)` makes a forked chain impossible rather than unlikely.
+
+  **What it does NOT do.** A superuser can drop or disable a trigger, or set
+  `session_replication_role`. So this is enforcement against the application, against an ordinary
+  compromise of the service, and against operator error, not against someone holding superuser on the
+  database. Beyond that point the hash chain makes an edit DETECTABLE rather than impossible, and even
+  that has a limit: an attacker who can write to the table and recompute every hash from their edit to
+  the head produces a chain that verifies. Closing that needs the head hash recorded somewhere the
+  database cannot reach, which `pnpm audit:verify` prints for exactly that purpose, and which this kit
+  does not automate.
+
+  **A chain nobody walks is a column of hashes**, so `pnpm audit:verify --master` or
+  `--tenant <slug>` walks it in pages and reports the first break, distinguishing an altered field from
+  a removed event from a truncated start. Verified by tampering: each of those three cases is planted
+  and detected, and restoring the original value returns the chain to intact, so the detection is not
+  merely always-failing.
+
+  **What is recorded**: tenant provisioned (master chain), login succeeded, failed and throttled, user
+  registered, and authorization denied. A failed login uses ONE action name for "no such user" and
+  "disabled account", matching the response, so the log does not answer the account-enumeration question
+  the API refuses to answer; the reason sits in metadata instead.
+
+  **Two honest gaps.** Appends are inline and fail OPEN: a failed append is logged at error level and the
+  request proceeds, because making the chain a hard dependency for logging in would turn an unreachable
+  database into a total authentication outage. The chain cannot reveal an event that was never written,
+  so a deployment that must not lose events should write ahead to a durable queue. And a control-plane
+  event records that the control plane was used, not by whom, because the credential authenticates the
+  bearer rather than a person; PCI Req 10.2 asks for user identification, and this kit cannot supply it
+  for control-plane actions until mutual TLS or a signed operator token lands.
 
 - **Rate limiting and login throttling.** Two distinct controls, both on Redis with a sliding window
   evaluated atomically in a Lua script. A per-client request budget applies to every route, with

@@ -38,6 +38,8 @@
     "infra:reset": "docker compose down -v && docker compose up -d",
     "smoke": "./scripts/smoke-test.sh",
     "smoke:slowloris": "node scripts/slowloris-probe.mjs",
+    "audit:contention": "node packages/db/dist/audit/contention-probe.js",
+    "audit:verify": "node packages/db/dist/audit/verify-chain.js",
     "clean:test-tenants": "./scripts/clean-test-tenants.sh"
   },
   "devDependencies": {

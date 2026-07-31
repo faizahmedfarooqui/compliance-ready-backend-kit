@@ -215,6 +215,14 @@ jobs:
 
           REQUEST_TIMEOUT_MS=4000 pnpm smoke:slowloris
 
+      # Concurrency, which the smoke test cannot exercise: it drives one request at a time, so it would
+      # prove the writer works and say nothing about whether the advisory lock serialises. The pass
+      # condition is that UNIQUE(prev_hash) never fires; a run that hit it and retried would look healthy
+      # while proving the lock did not serialise and the database caught what the application should have
+      # prevented.
+      - name: Audit chain holds under concurrent appends
+        run: pnpm audit:contention --appends 50
+
       # The rest of the key lifecycle, after the smoke test rather than before it so revoking a key
       # cannot invalidate a token the smoke test is still using.
       #

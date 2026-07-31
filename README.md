@@ -211,6 +211,9 @@ Three things worth knowing:
 | `GET` | `/.well-known/jwks.json` | none | Public verification keys. A bare JWK Set, deliberately not enveloped |
 | `GET` | `/docs` | none | OpenAPI UI. Document at `/docs/openapi.json` and `/docs/openapi.yaml` |
 
+Operator commands: `pnpm audit:verify --master` or `--tenant <slug>` walks a chain and reports the
+first break; `pnpm audit:contention` fires concurrent appends and asserts the chain cannot fork.
+
 All bodies follow the response contract above, except `/.well-known/jwks.json`. Error bodies are
 `application/problem+json`.
 
@@ -462,11 +465,17 @@ end-to-end smoke test against a live Postgres and Redis, run in CI on every push
 
 Known gaps, stated plainly because a compliance kit that hides its gaps is worse than no kit:
 
-- **No audit log yet.** Provisioning, login, and permission changes are the events an
-  assessor will ask to see, and today they are not recorded. This is the single biggest
-  remaining gap and the rest of v0.2. Note what it means for the control plane: the credential
-  authenticates the bearer rather than a person, so even once events are recorded, "which operator
-  provisioned this tenant" will need mutual TLS or a signed operator token to answer.
+- **The audit log cannot say WHO used the control plane.** Events are recorded, but the
+  control-plane credential authenticates the bearer rather than a person, so
+  `tenant.provisioned` records that the control plane was used and not by whom. PCI Req 10.2 asks for
+  user identification; answering it needs mutual TLS or a signed operator token.
+- **Audit appends are inline and fail open.** A failed append is logged at error level and the
+  request proceeds, because making the chain a hard dependency for logging in would turn an
+  unreachable database into a total authentication outage. The hash chain cannot reveal an event that
+  was never written, so a deployment that must not lose events should write ahead to a durable queue.
+- **The audit head hash is not anchored anywhere.** `pnpm audit:verify` prints it, and nothing in the
+  kit stores it off the box, so an attacker with write access who recomputes every hash from their
+  edit to the head produces a chain that verifies.
 - **Login throttling is not a substitute for MFA.** It resists credential stuffing against an
   account or from an address, and it does nothing about one attempt per account across ten thousand
   accounts, which trips no per-account counter. Phishing-resistant MFA is the actual control and it
@@ -501,7 +510,7 @@ Known gaps, stated plainly because a compliance kit that hides its gaps is worse
 
 | Milestone | Contents |
 | --- | --- |
-| v0.2 | **Landed:** authenticated control plane, Redis rate limiting + login throttling, request-level DoS limits. **Remaining:** append-only hash-chained audit log, which is what makes the control plane *audited* as well as authenticated |
+| v0.2 | **Complete:** authenticated control plane, Redis rate limiting + login throttling, request-level DoS limits, and the append-only hash-chained audit log |
 | v0.3 | Passkeys / WebAuthn, OIDC, TOTP |
 | v0.4 | KMS and HSM `KeyProvider` adapters, field-level envelope encryption |
 | v0.5 | OpenTelemetry traces and metrics, structured request logging |

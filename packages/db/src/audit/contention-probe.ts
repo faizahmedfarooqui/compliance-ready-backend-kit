@@ -1,0 +1,313 @@
+/**
+ * Prove the audit chain does not fork under concurrent appends.
+ *
+ * A unit test with a mocked client can assert that the writer calls `pg_advisory_xact_lock` before it
+ * reads the head. It cannot tell you whether the lock actually serialises anything, because that
+ * depends on Postgres, on every caller using the same key, and on the read and the insert sharing one
+ * transaction. Only real contention settles it.
+ *
+ * WHAT COUNTS AS A PASS, and why it is not merely "no errors".
+ *
+ * `UNIQUE(prev_hash)` is the schema's fork guard, so if the lock is doing its job that constraint NEVER
+ * fires. A run where appends failed with a unique violation and were retried would look healthy while
+ * proving the opposite: that the lock did not serialise and the database caught what the application
+ * should have prevented. So a single unique violation fails this probe.
+ *
+ * Lives in packages/db rather than scripts/ because `pg` resolves from this package, and because the
+ * other operator CLIs live here too.
+ *
+ * Usage: node packages/db/dist/audit/contention-probe.js [--appends 50]
+ */
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { config as readDotenvFile } from "dotenv";
+import { Client } from "pg";
+import { PrismaPg } from "@prisma/adapter-pg";
+import { GENESIS_HASH, computeAuditHash } from "@compliance-kit/crypto";
+import { PrismaClient } from "../generated/master/client";
+import { appendAuditEvent } from "./audit-writer";
+
+function loadLocalDotenv(): void {
+  if (process.env.NODE_ENV === "production") return;
+  let dir = process.cwd();
+  for (let level = 0; level < 5; level += 1) {
+    const candidate = path.join(dir, ".env");
+    if (existsSync(candidate)) {
+      readDotenvFile({ path: candidate, quiet: true });
+      return;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return;
+    dir = parent;
+  }
+}
+
+interface EventRow {
+  seq: string;
+  occurred_at: Date;
+  action: string;
+  actor_type: string;
+  actor_id: string | null;
+  resource_type: string | null;
+  resource_id: string | null;
+  trace_id: string | null;
+  source_ip: string | null;
+  metadata: Record<string, string>;
+  prev_hash: Buffer;
+  hash: Buffer;
+}
+
+async function main(): Promise<void> {
+  loadLocalDotenv();
+  /**
+   * Validated, not merely parsed, and matching what audit:verify does for --page-size.
+   *
+   * `Number("abc")` is NaN, and `Array.from({ length: NaN })` is an EMPTY array, so an unvalidated
+   * value made the probe fire nothing while announcing "Firing NaN concurrent appends" and printing
+   * PASS for both the unique-violation and the all-succeeded checks, since neither has anything to
+   * disagree with. A concurrency probe that reports success having run zero appends is the exact
+   * failure this file has already been fixed for twice, so it does not get a third variation.
+   *
+   * A missing value is rejected rather than silently defaulting to 50: someone who typed `--appends`
+   * meant to choose a number, and quietly picking one for them hides the typo.
+   */
+  const argIndex = process.argv.indexOf("--appends");
+  let appends = 50;
+  if (argIndex !== -1) {
+    const raw = process.argv[argIndex + 1];
+    if (raw === undefined || raw.startsWith("--")) {
+      process.stderr.write("--appends needs a positive integer, e.g. --appends 50\n");
+      process.exitCode = 1;
+      return;
+    }
+    appends = Number(raw);
+    if (!Number.isInteger(appends) || appends < 1) {
+      process.stderr.write(
+        `--appends must be a positive integer, got "${raw}". ` +
+          `A non-numeric or zero value would fire no appends and report success.\n`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+  }
+
+  const url = process.env.MASTER_DATABASE_URL;
+  if (!url) {
+    process.stderr.write("MASTER_DATABASE_URL must be set\n");
+    process.exitCode = 1;
+    return;
+  }
+
+  let failures = 0;
+  const fail = (m: string): void => {
+    process.stderr.write(`  FAIL  ${m}\n`);
+    failures += 1;
+  };
+  const pass = (m: string): void => {
+    process.stdout.write(`  PASS  ${m}\n`);
+  };
+
+  const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
+  // A plain client for reading back, because the probe cannot clean up after itself: the table is
+  // append-only and the triggers refuse DELETE even for a superuser. So it records where it started and
+  // verifies everything appended AFTER that point, which is its own rows plus anything another writer
+  // added in the meantime. Deliberately not filtered to its own: a chain is only verifiable as a
+  // contiguous run, and skipping another writer's rows would break the very links being checked.
+  const admin = new Client({ connectionString: url });
+
+  try {
+    await admin.connect();
+    const before = await admin.query<{ seq: string }>(
+      "SELECT COALESCE(MAX(seq), 0)::text AS seq FROM audit_events",
+    );
+    const startSeq = BigInt(before.rows[0]?.seq ?? "0");
+    process.stdout.write(`Firing ${appends} concurrent appends from seq ${startSeq}\n`);
+
+    const results = await Promise.allSettled(
+      Array.from({ length: appends }, (_, i) =>
+        appendAuditEvent(prisma, {
+          action: "probe.concurrent",
+          actorType: "system",
+          actorId: `probe-${i}`,
+          metadata: { index: String(i) },
+        }),
+      ),
+    );
+
+    const rejected = results.filter((r) => r.status === "rejected");
+    const isUnique = (r: PromiseRejectedResult): boolean => {
+      const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+      return (
+        msg.includes("audit_events_prev_hash_unique") || msg.includes("audit_events_hash_unique")
+      );
+    };
+    const uniqueViolations = rejected.filter(isUnique);
+
+    // THE assertion. A unique violation means the lock did not serialise and the database caught a fork
+    // the application should have made impossible.
+    if (uniqueViolations.length === 0) {
+      pass(
+        `no unique violations across ${appends} concurrent appends, so the lock serialised them`,
+      );
+    } else {
+      const first = uniqueViolations[0];
+      const msg = first.reason instanceof Error ? first.reason.message : String(first.reason);
+      fail(
+        `${uniqueViolations.length} unique violation(s): the lock did NOT serialise. ${msg.slice(0, 160)}`,
+      );
+    }
+
+    const others = rejected.filter((r) => !isUnique(r));
+    if (others.length === 0) {
+      pass(`all ${appends} appends succeeded`);
+    } else {
+      const msg =
+        others[0].reason instanceof Error ? others[0].reason.message : String(others[0].reason);
+      fail(`${others.length} append(s) failed for another reason: ${msg.slice(0, 200)}`);
+    }
+
+    /**
+     * `ORDER BY audit_events.seq`, qualified, and no `::text` alias on the selected column.
+     *
+     * This cost an hour. The first version selected `seq::text AS seq` and ordered by `seq`, and
+     * PostgreSQL resolves an unqualified ORDER BY name against the OUTPUT columns first, so it sorted
+     * the TEXT: 1, 10, 11 ... 19, 2, 20. The second row returned was seq 10, its prev_hash did not match
+     * row 1's hash, and the probe reported "chain link broken at seq 10" against a chain that was
+     * perfectly intact.
+     *
+     * Worth recording because of how convincingly it lied. It reproduced every run, pointed at a
+     * specific row, and implicated the concurrency code, which is exactly where suspicion naturally
+     * falls. It also hid whenever every seq had the same number of digits, so a 20-append run onto an
+     * existing chain of 50 passed cleanly. What settled it was asking Postgres directly whether any row
+     * disagreed with its predecessor, and getting zero.
+     *
+     * bigint comes back as a string from node-postgres regardless, so the cast bought nothing.
+     */
+    const rows = await admin.query<EventRow>(
+      `SELECT seq, occurred_at, action, actor_type, actor_id, resource_type, resource_id,
+              trace_id, source_ip, metadata, prev_hash, hash
+         FROM audit_events WHERE seq > $1 ORDER BY audit_events.seq ASC`,
+      [startSeq.toString()],
+    );
+
+    /**
+     * AT LEAST `appends`, not exactly.
+     *
+     * An exact count asserts the database is quiescent, which it is not: CI runs this step with the
+     * auth service still up, so any request that emits an audit event lands here too and would fail the
+     * probe while proving nothing. The count is not the fork-safety signal anyway. The unique-violation
+     * check is, and the chain walk below is, and both hold with other writers present because they
+     * follow the links rather than counting rows.
+     *
+     * A shortfall is still a failure: fewer rows than appends means an append reported success and did
+     * not land.
+     */
+    const landed = rows.rowCount ?? 0;
+    if (landed >= appends) {
+      const extra = landed - appends;
+      pass(
+        `all ${appends} appends landed` +
+          (extra > 0 ? `, alongside ${extra} row(s) from other writers, which is fine` : ""),
+      );
+    } else {
+      fail(`expected at least ${appends} rows after seq ${startSeq}, found ${String(landed)}`);
+    }
+
+    let expectedPrev: Buffer = GENESIS_HASH;
+    if (startSeq !== 0n) {
+      const head = await admin.query<{ hash: Buffer }>(
+        "SELECT hash FROM audit_events WHERE seq = $1",
+        [startSeq.toString()],
+      );
+      expectedPrev = Buffer.from(head.rows[0].hash);
+    }
+
+    let linkBreak: string | null = null;
+    let hashBreak: string | null = null;
+    // Counted, so the pass line can say how many were actually checked. The first version reported
+    // "all 50 hashes recompute" after breaking out of the loop at row 10, having checked nine.
+    let checked = 0;
+    for (const r of rows.rows) {
+      if (!Buffer.from(r.prev_hash).equals(expectedPrev)) {
+        linkBreak = r.seq;
+        break;
+      }
+      /**
+       * Recomputed from what the DATABASE returned, not from what the writer sent. That is what catches
+       * a round-trip mismatch: a timestamp rendered differently on the way out, or metadata normalised
+       * by jsonb. Either would present as tampering later, so it is worth catching here.
+       */
+      const recomputed = computeAuditHash(
+        {
+          action: r.action,
+          actorType: r.actor_type,
+          actorId: r.actor_id,
+          resourceType: r.resource_type,
+          resourceId: r.resource_id,
+          traceId: r.trace_id,
+          sourceIp: r.source_ip,
+          occurredAt: r.occurred_at.toISOString(),
+          metadata: r.metadata,
+        },
+        Buffer.from(r.prev_hash),
+      );
+      if (!recomputed.equals(Buffer.from(r.hash))) {
+        hashBreak = r.seq;
+        break;
+      }
+      expectedPrev = Buffer.from(r.hash);
+      checked += 1;
+    }
+
+    /**
+     * Refuse to report a pass on an empty result set.
+     *
+     * The first version of this probe did exactly that: when every append failed, no rows came back, the
+     * two loops below never ran, and both checks printed PASS. A probe that reports success precisely
+     * when nothing happened is worse than no probe, because it is trusted. The same vacuous-pass trap
+     * the slowloris probe had.
+     */
+    if (rows.rowCount === 0) {
+      fail("no rows to verify, so the chain and hash checks proved nothing (not a pass)");
+    } else if (linkBreak === null) {
+      pass(`all ${String(checked)} events point at their predecessor: one unbroken chain, no fork`);
+    } else {
+      fail(`chain link broken at seq ${linkBreak}`);
+    }
+
+    if (rows.rowCount === 0) {
+      // Already reported above; do not print a second misleading line.
+    } else if (hashBreak === null) {
+      pass(
+        `all ${String(checked)} hashes recompute from what Postgres returned: the round trip is exact`,
+      );
+    } else {
+      fail(`hash mismatch at seq ${hashBreak}: the stored row does not hash to its stored hash`);
+    }
+  } finally {
+    await prisma.$disconnect().catch(() => undefined);
+    await admin.end().catch(() => undefined);
+  }
+
+  if (failures > 0) {
+    process.stderr.write(`\n${failures} check(s) failed.\n`);
+    process.exitCode = 1;
+    return;
+  }
+  process.stdout.write("\nAll checks passed.\n");
+}
+
+if (require.main === module) {
+  main().catch((err: unknown) => {
+    /**
+     * Falls back to the whole error when the message is empty, which is not hypothetical: a Postgres
+     * that was simply not running produced an Error with an empty `message`, so this printed one bare
+     * newline and exited 1. A tool that fails with no explanation sends whoever runs it looking at the
+     * wrong thing, and this one is run when someone is already worried about their audit log.
+     */
+    const message = err instanceof Error && err.message ? err.message : String(err);
+    process.stderr.write(`${message || "failed with an empty error"}\n`);
+    if (err instanceof Error && err.stack && !err.message) process.stderr.write(`${err.stack}\n`);
+    process.exitCode = 1;
+  });
+}
