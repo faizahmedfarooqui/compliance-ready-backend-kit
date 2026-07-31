@@ -158,3 +158,89 @@ model GlobalConfig {
 
   @@map("global_config")
 }
+
+// ---------------------------------------------------------------------------
+// Append-only audit log
+//
+// Present in BOTH the tenant and master schemas, with the same shape and a chain of its own in each.
+// Events about a tenant's users are that tenant's data and belong in that tenant's database, which is
+// also what keeps per-tenant export and deletion coherent. Control-plane events (provisioning) have no
+// tenant database to go in at the time they happen, so they go to the master chain.
+//
+// One chain per database, never one shared chain. A shared chain would need a cross-database round trip
+// on every audited write, making the master a single point of failure for all of them, and it could not
+// be serialised anyway: Postgres advisory locks are per-database, so there is no lock that orders
+// appends across tenants.
+//
+// The integrity controls are NOT expressed here, because Prisma's schema language cannot express them.
+// See packages/db/sql/audit-immutability.sql, applied at provisioning, and the master migration: a trigger
+// refusing UPDATE, DELETE and TRUNCATE, REVOKE on those privileges, and CHECK constraints pinning
+// the hash widths, the metadata shape and the actor_type/actor_id pairing.
+// ---------------------------------------------------------------------------
+
+enum AuditActorType {
+  /// An authenticated user inside the tenant. actor_id is their user id.
+  user
+  /// The control-plane bearer credential. It authenticates the BEARER and not a person, so actor_id
+  /// is null: recording an operator identity here would imply attribution the credential cannot carry.
+  control_plane
+  /// The service acting on its own, e.g. a provisioning step.
+  system
+  /// An unauthenticated caller, e.g. a failed login. actor_id is null by definition.
+  anonymous
+
+  @@map("audit_actor_type")
+}
+
+/// One recorded event. Rows are never updated or deleted; see the immutability SQL.
+model AuditEvent {
+  /// Position in the chain, assigned by the database. Gaps are expected and harmless: a sequence
+  /// consumes a value even when the transaction rolls back, and integrity comes from the hash links
+  /// rather than from this column being contiguous.
+  seq BigInt @id @default(autoincrement())
+
+  /// Set from the database clock inside the appending transaction, not `now()` as a column default:
+  /// the value has to be known while the hash is computed, so the writer reads it and passes it.
+  occurredAt DateTime @map("occurred_at") @db.Timestamptz(6)
+
+  /// Dotted and past tense, e.g. "auth.login.succeeded". Queried by prefix, so the order of the
+  /// segments matters more than it looks.
+  action String
+
+  actorType AuditActorType @map("actor_type")
+  /// Text rather than uuid: a control-plane or system actor has no uuid, and a future external
+  /// identity may not be one either.
+  actorId   String?        @map("actor_id")
+
+  resourceType String? @map("resource_type")
+  resourceId   String? @map("resource_id")
+
+  /// Ties the event to the request that caused it, and to the server log line for the same request.
+  traceId  String? @map("trace_id")
+  sourceIp String? @map("source_ip")
+
+  /// Flat map of STRING values only. See AuditMetadata in packages/crypto: jsonb rewrites numbers and
+  /// reorders keys, and a hash over data the database may rewrite fails for reasons unrelated to
+  /// tampering.
+  metadata Json @default("{}")
+
+  /// The previous event's hash. The genesis row carries 32 zero bytes rather than NULL, so that the
+  /// unique index below can mean what it says.
+  prevHash Bytes @map("prev_hash")
+  hash     Bytes
+
+  /// Exactly one event may follow any given hash, which makes a FORK impossible at the database level
+  /// rather than merely unlikely. This is the second line of defence behind the advisory lock the
+  /// writer takes: if that lock is ever wrong, or another code path inserts without it, two concurrent
+  /// appends both reading the same head collide here and one fails, instead of both succeeding and
+  /// leaving two divergent histories that each verify.
+  @@unique([prevHash], map: "audit_events_prev_hash_unique")
+  /// A duplicate hash would mean two identical events at the same point in history, which cannot
+  /// legitimately happen and would make the chain ambiguous to walk.
+  @@unique([hash], map: "audit_events_hash_unique")
+  /// The common query: what happened to this thing, most recent first.
+  @@index([resourceType, resourceId, seq(sort: Desc)], map: "audit_events_resource_idx")
+  /// The other common query: everything of one kind in a time range.
+  @@index([action, occurredAt(sort: Desc)], map: "audit_events_action_idx")
+  @@map("audit_events")
+}

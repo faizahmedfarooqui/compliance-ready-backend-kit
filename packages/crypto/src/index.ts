@@ -19,6 +19,18 @@ export {
 export { LocalKeyProvider, type KeyContext, type KeyProvider } from "./key-provider";
 
 export {
+  AUDIT_HASH_BYTES,
+  GENESIS_HASH,
+  canonicalAuditForm,
+  computeAuditHash,
+  verifyAuditChain,
+  type AuditEventInput,
+  type AuditMetadata,
+  type ChainBreak,
+  type StoredAuditEvent,
+} from "./audit-hash";
+
+export {
   ENCRYPTION_ALG,
   ENCRYPTION_KEY_BYTES,
   SIGNING_ALG,
