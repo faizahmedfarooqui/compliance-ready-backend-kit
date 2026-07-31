@@ -43,17 +43,24 @@ function loadLocalDotenv(): void {
   }
 }
 
-function parseArgs(argv: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
+/**
+ * A bare flag yields the BOOLEAN `true`, not the string "true", and the difference matters.
+ *
+ * With a string, `--tenant` given no value became the value "true", so the tool went off to resolve a
+ * tenant literally named "true" and failed several steps later with an error about an unknown tenant.
+ * That is a confusing way to report a typo. Keeping the two representations distinct lets a flag that
+ * requires a value say so immediately.
+ */
+function parseArgs(argv: string[]): Record<string, string | true> {
+  const out: Record<string, string | true> = {};
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (!arg.startsWith("--")) continue;
     const [flag, inline] = arg.slice(2).split("=", 2);
-    // A bare flag like --master takes the value "true" rather than swallowing the next argument.
     const next = argv[i + 1];
     if (inline !== undefined) out[flag] = inline;
     else if (next !== undefined && !next.startsWith("--")) out[flag] = argv[++i];
-    else out[flag] = "true";
+    else out[flag] = true;
   }
   return out;
 }
@@ -92,7 +99,10 @@ Verify an append-only audit chain.
   pnpm audit:verify --tenant <slug|uuid>  one tenant's chain
   pnpm audit:verify --tenant X --page-size 5000
 
-Environment: MASTER_DATABASE_URL, TENANT_CLUSTER_URL
+Environment:
+  MASTER_DATABASE_URL   required
+  TENANT_CLUSTER_URL    optional; defaults to MASTER_DATABASE_URL, which is correct when the
+                        tenant databases live on the same cluster as the master
 `;
 
 /**
@@ -142,14 +152,24 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
   const masterUrl = process.env.MASTER_DATABASE_URL;
-  const tenantClusterUrl = process.env.TENANT_CLUSTER_URL ?? masterUrl;
-  if (!masterUrl || !tenantClusterUrl) {
-    process.stderr.write(`MASTER_DATABASE_URL and TENANT_CLUSTER_URL must be set.\n${USAGE}`);
+  // Only MASTER_DATABASE_URL can actually be missing: the tenant cluster falls back to it below, so
+  // testing both meant naming a variable that was never the problem and sending an operator to set an
+  // environment variable this tool does not need.
+  if (!masterUrl) {
+    process.stderr.write(`MASTER_DATABASE_URL must be set.\n${USAGE}`);
     process.exitCode = 1;
     return;
   }
+  const tenantClusterUrl = process.env.TENANT_CLUSTER_URL ?? masterUrl;
 
-  const wantsMaster = args.master === "true";
+  const wantsMaster = args.master === true || args.master === "true";
+
+  // A flag given no value is a typo, not a request to verify a tenant called "true".
+  if (args.tenant === true) {
+    process.stderr.write(`--tenant needs a slug or uuid.\n${USAGE}`);
+    process.exitCode = 1;
+    return;
+  }
   const tenant = args.tenant;
   // Requiring one of the two, rather than defaulting to master, because "verify passed" against the
   // wrong database is the most misleading output this tool could produce.
@@ -159,7 +179,13 @@ async function main(): Promise<void> {
     return;
   }
 
-  const pageSize = Number(args["page-size"] ?? "1000");
+  const rawPageSize = args["page-size"];
+  if (rawPageSize === true) {
+    process.stderr.write(`--page-size needs a number.\n${USAGE}`);
+    process.exitCode = 1;
+    return;
+  }
+  const pageSize = Number(rawPageSize ?? "1000");
   if (!Number.isInteger(pageSize) || pageSize < 1) {
     process.stderr.write(`--page-size must be a positive integer.\n`);
     process.exitCode = 1;
