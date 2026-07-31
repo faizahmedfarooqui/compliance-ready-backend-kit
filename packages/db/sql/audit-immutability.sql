@@ -1,4 +1,5 @@
--- Append-only enforcement for audit_events, in Postgres rather than in application code.
+-- Integrity rules for audit_events, in Postgres rather than in application code: append-only
+-- enforcement, plus the constraints that keep a row well formed enough to verify.
 --
 -- Applied to EVERY database that carries a chain: each tenant database at provisioning time, and the
 -- master database by its migration. Written once and used in both places, because two copies of a
@@ -66,3 +67,72 @@ CREATE TRIGGER audit_events_no_truncate
 
 -- INSERT and SELECT remain, which is the entire intended surface: append and read.
 REVOKE UPDATE, DELETE, TRUNCATE ON audit_events FROM PUBLIC;
+
+-- ---------------------------------------------------------------------------
+-- Constraints that make the chain's construction rules self-enforcing.
+--
+-- The application already refuses to build a malformed event: computeAuditHash throws on a prev_hash
+-- that is not 32 bytes, and the AuditMetadata type restricts metadata to string values. Neither of
+-- those reaches the database, so until now a writer bug, a migration, or a hand-written INSERT could
+-- store a row that no amount of care elsewhere would catch.
+--
+-- That failure mode is worse than it first looks, because it does not present as corruption. It
+-- presents as TAMPERING: a 16-byte prev_hash makes the verifier throw rather than report, and metadata
+-- containing a number comes back from jsonb rewritten (1e2 as 100), so the recomputed hash differs and
+-- the chain reads as broken. Someone investigating a genuine incident would be handed a false positive
+-- at exactly the moment they most need to trust the tool. Same reasoning as the CHECK constraints on
+-- config_keys: an invariant the application believes in belongs where it cannot be bypassed.
+
+-- Exactly SHA-256 width, on both links. Not "at most": a shorter value is not a truncated hash, it is
+-- a value that was never a hash.
+ALTER TABLE audit_events DROP CONSTRAINT IF EXISTS audit_events_hash_width_ck;
+ALTER TABLE audit_events ADD CONSTRAINT audit_events_hash_width_ck
+  CHECK (octet_length(prev_hash) = 32 AND octet_length(hash) = 32);
+
+/*
+ * Metadata must be a flat object whose every value is a string.
+ *
+ * A function because a CHECK constraint cannot contain a subquery, and detecting a non-string value
+ * requires iterating the object. Marked IMMUTABLE, which is what makes it legal in a CHECK: the result
+ * depends only on the argument, so Postgres may cache and inline it.
+ *
+ * Rejecting nesting as well as non-string scalars is deliberate. A nested object would serialise into
+ * the hash as whatever the canonical form happened to do with it, which is a rule nobody wrote down;
+ * refusing it keeps the hashed shape exactly the shape the code describes.
+ */
+CREATE OR REPLACE FUNCTION audit_metadata_is_flat_strings(m jsonb) RETURNS boolean AS $fn$
+  SELECT jsonb_typeof(m) = 'object'
+     AND NOT EXISTS (
+       SELECT 1 FROM jsonb_each(m) AS entry(key, value)
+       WHERE jsonb_typeof(entry.value) <> 'string'
+     );
+$fn$ LANGUAGE sql IMMUTABLE;
+
+ALTER TABLE audit_events DROP CONSTRAINT IF EXISTS audit_events_metadata_flat_ck;
+ALTER TABLE audit_events ADD CONSTRAINT audit_events_metadata_flat_ck
+  CHECK (audit_metadata_is_flat_strings(metadata));
+
+/*
+ * The actor_type and actor_id pairing, which encodes an honesty requirement rather than a data shape.
+ *
+ * A `user` event with no actor_id is evidence that records nothing about who acted, so it is refused.
+ *
+ * `control_plane` and `anonymous` are the reverse: they must carry NO actor_id. The control-plane
+ * credential authenticates the BEARER and not a person, so any identifier written there would imply an
+ * attribution the credential cannot support, and an audit trail that implies attribution it does not
+ * have is worse than one that admits the gap. `anonymous` has nobody to name by definition.
+ *
+ * `system` is left free. The service acting on its own may reasonably identify a job or a migration.
+ */
+ALTER TABLE audit_events DROP CONSTRAINT IF EXISTS audit_events_actor_ck;
+ALTER TABLE audit_events ADD CONSTRAINT audit_events_actor_ck
+  CHECK (
+    (actor_type = 'user' AND actor_id IS NOT NULL)
+    OR (actor_type IN ('control_plane', 'anonymous') AND actor_id IS NULL)
+    OR actor_type = 'system'
+  );
+
+-- An event with no action name is not queryable and not evidence of anything.
+ALTER TABLE audit_events DROP CONSTRAINT IF EXISTS audit_events_action_ck;
+ALTER TABLE audit_events ADD CONSTRAINT audit_events_action_ck
+  CHECK (length(action) > 0);

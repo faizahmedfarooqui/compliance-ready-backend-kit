@@ -105,8 +105,9 @@ model UserRole {
 // appends across tenants.
 //
 // The integrity controls are NOT expressed here, because Prisma's schema language cannot express them.
-// See sql/tenant-audit-immutability.sql, applied at provisioning, and the master migration: a trigger
-// refusing UPDATE, DELETE and TRUNCATE, plus REVOKE on those privileges.
+// See packages/db/sql/audit-immutability.sql, applied at provisioning, and the master migration: a trigger
+// refusing UPDATE, DELETE and TRUNCATE, REVOKE on those privileges, and CHECK constraints pinning
+// the hash widths, the metadata shape and the actor_type/actor_id pairing.
 // ---------------------------------------------------------------------------
 
 enum AuditActorType {
