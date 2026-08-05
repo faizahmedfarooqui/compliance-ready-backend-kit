@@ -174,7 +174,8 @@ jobs:
           exit 1
 
       # Captured, not just run, because the immutability step below needs one of the tenant slugs the
-      # suite provisions and they carry a timestamp. The final line is `... Tenants created: a, b`.
+      # suite provisions, and they carry a timestamp so they cannot be hardcoded. The last line reads
+      # `All checks passed. Tenants created: smoke-a-<unix-ts>, smoke-b-<unix-ts>`.
       #
       # `set -o pipefail` IS LOAD-BEARING, not boilerplate. GitHub's default shell for `run` is
       # `bash -e {0}`, WITHOUT pipefail, so the exit status of `pnpm smoke | tee` is tee's status, which

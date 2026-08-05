@@ -33,8 +33,9 @@ import { randomBytes } from "node:crypto";
 import { Client } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { ConnectionManager } from "../connection-manager";
-import { PrismaClient } from "../generated/master/client";
-import { appendAuditEvent } from "./audit-writer";
+import { PrismaClient as MasterPrismaClient } from "../generated/master/client";
+import { PrismaClient as TenantPrismaClient } from "../generated/tenant/client";
+import { appendAuditEvent, type AuditChainClient } from "./audit-writer";
 import { loadLocalDotenv } from "../cli/load-dotenv";
 
 /**
@@ -442,8 +443,20 @@ async function main(): Promise<void> {
      * Through `appendAuditEvent` rather than a raw INSERT, so the row it leaves is a properly chained
      * event and `pnpm audit:verify` still passes afterwards. It cannot be rolled back for the same reason
      * the contention probe's rows cannot be cleaned up: the table refuses DELETE, which is the point.
+     *
+     * THE CLIENT MATCHES THE TARGET, which it did not before: the master client was used for both. That
+     * worked, and would have kept working, because the only surface touched is `$transaction` and the raw
+     * query methods, which are identical on both. It was still wrong in the way this package is careful
+     * about everywhere else. The two clients are generated from different schemas, so using the master's
+     * against a tenant database is the same "close enough" reasoning that `AuditChainClient` exists to
+     * refuse, and it would quietly become false the day the two schemas diverge.
+     *
+     * No cast is needed to hold both in one variable: each satisfies `AuditChainClient` structurally,
+     * which is exactly what that interface was introduced for.
      */
-    const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: targetUrl }) });
+    const prisma: AuditChainClient & { $disconnect(): Promise<void> } = wantsMaster
+      ? new MasterPrismaClient({ adapter: new PrismaPg({ connectionString: targetUrl }) })
+      : new TenantPrismaClient({ adapter: new PrismaPg({ connectionString: targetUrl }) });
     try {
       const appended = await appendAuditEvent(prisma, {
         action: "probe.immutability",
