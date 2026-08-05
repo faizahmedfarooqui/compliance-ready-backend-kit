@@ -249,7 +249,13 @@ jobs:
           pnpm audit:immutability --master
 
           # The suite prints `Tenants created: smoke-a-<ts>, smoke-b-<ts>` as its last line.
-          tenant=$(grep -oE 'smoke-a-[0-9]+' /tmp/smoke.log | head -1)
+          #
+          # `|| true` because grep exits 1 when it matches nothing, and under `set -e` that aborts the
+          # step at the assignment, so the explicit check below would be dead code and the operator would
+          # get a bare non-zero exit instead of a message naming the cause. It also covers grep being
+          # killed by the SIGPIPE from `head -1` closing the pipe early. The check, not the exit status,
+          # is what decides here.
+          tenant=$(grep -oE 'smoke-a-[0-9]+' /tmp/smoke.log | head -1 || true)
           if [ -z "$tenant" ]; then
             echo "::error::could not find a smoke tenant in /tmp/smoke.log, so the tenant chain was not probed"
             exit 1
