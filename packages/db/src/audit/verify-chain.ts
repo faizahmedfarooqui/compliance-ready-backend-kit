@@ -22,26 +22,9 @@
  *
  * Exits 0 if the chain holds, 1 if it does not or if the arguments are wrong.
  */
-import { existsSync } from "node:fs";
-import path from "node:path";
-import { config as readDotenvFile } from "dotenv";
 import { GENESIS_HASH, verifyAuditChain, type StoredAuditEvent } from "@compliance-kit/crypto";
 import { ConnectionManager } from "../connection-manager";
-
-function loadLocalDotenv(): void {
-  if (process.env.NODE_ENV === "production") return;
-  let dir = process.cwd();
-  for (let level = 0; level < 5; level += 1) {
-    const candidate = path.join(dir, ".env");
-    if (existsSync(candidate)) {
-      readDotenvFile({ path: candidate, quiet: true });
-      return;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) return;
-    dir = parent;
-  }
-}
+import { loadLocalDotenv } from "../cli/load-dotenv";
 
 /**
  * A bare flag yields the BOOLEAN `true`, not the string "true", and the difference matters.

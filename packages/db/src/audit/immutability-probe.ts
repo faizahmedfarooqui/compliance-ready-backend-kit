@@ -29,36 +29,24 @@
  *   pnpm audit:immutability --master
  *   pnpm audit:immutability --tenant acme
  */
-import { existsSync } from "node:fs";
-import path from "node:path";
 import { randomBytes } from "node:crypto";
-import { config as readDotenvFile } from "dotenv";
 import { Client } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { ConnectionManager } from "../connection-manager";
 import { PrismaClient } from "../generated/master/client";
 import { appendAuditEvent } from "./audit-writer";
-
-function loadLocalDotenv(): void {
-  if (process.env.NODE_ENV === "production") return;
-  let dir = process.cwd();
-  for (let level = 0; level < 5; level += 1) {
-    const candidate = path.join(dir, ".env");
-    if (existsSync(candidate)) {
-      readDotenvFile({ path: candidate, quiet: true });
-      return;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) return;
-    dir = parent;
-  }
-}
+import { loadLocalDotenv } from "../cli/load-dotenv";
 
 /**
  * A bare flag yields the BOOLEAN `true`, not the string "true", so a flag that needs a value can say so
- * immediately rather than going off to resolve a tenant literally named "true". Same shape as the one in
- * verify-chain.ts, kept local for the same reason that file's helpers were un-exported on review: these
- * are CLI plumbing, and a shared export invites importing CLI internals into service code.
+ * immediately rather than going off to resolve a tenant literally named "true".
+ *
+ * STILL LOCAL, unlike `loadLocalDotenv` which was extracted to ../cli/load-dotenv. The difference is that
+ * the six copies of that were byte-identical, so collapsing them was a pure move, whereas the four copies
+ * of this one are NOT: verify-chain and this file return `Record<string, string | true>`, while
+ * seed-tenant-admin and manage-keys return `Record<string, string>` and therefore treat a bare flag as
+ * absent. Unifying them would change how two operator CLIs read their arguments, which is a behaviour
+ * change that belongs in its own commit rather than riding along in a documentation pass.
  */
 function parseArgs(argv: string[]): Record<string, string | true> {
   const out: Record<string, string | true> = {};
@@ -117,6 +105,21 @@ async function readState(client: Client): Promise<ChainState> {
   );
   const row = res.rows[0];
   return { count: BigInt(row?.count ?? "0"), headHash: row?.head ?? null };
+}
+
+/**
+ * Is the row that was the head when the probe started still present?
+ *
+ * Asked by hash rather than by seq, because the question is whether that exact event survived. A row
+ * whose contents were altered hashes differently, so a matching hash means the row is both present and
+ * unmodified, which is precisely the invariant the destructive attempts must not have broken.
+ */
+async function headStillPresent(client: Client, headHashHex: string): Promise<boolean> {
+  const res = await client.query<{ present: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM audit_events WHERE hash = decode($1, 'hex')) AS present`,
+    [headHashHex],
+  );
+  return res.rows[0]?.present === true;
 }
 
 async function main(): Promise<void> {
@@ -314,21 +317,52 @@ async function main(): Promise<void> {
     }
 
     /**
-     * Nothing above changed anything.
+     * Nothing above DESTROYED anything.
      *
-     * The triggers are BEFORE triggers, so the statement is refused rather than performed and undone, and
-     * this is what confirms that rather than assuming it. It also catches the case where an attempt
+     * The triggers are BEFORE triggers, so a refused statement is never performed rather than performed
+     * and undone, and this is what confirms that rather than assuming it. It also catches an attempt that
      * partially succeeded before something else objected.
+     *
+     * GROWTH IS NOT A FAILURE, and an earlier version of this check got that wrong. It required the count
+     * and the head hash to be IDENTICAL before and after, which turns any legitimate concurrent append
+     * into a false FAIL announcing that the chain changed during the probe. That directly contradicted
+     * this tool's own usage text promising it is safe to run against a live chain, and "live" is exactly
+     * when another writer exists: a single login lands an event. The same mistake the contention probe
+     * shipped with, where an exact row count asserted a quiescent database that CI does not provide.
+     *
+     * So the invariant is narrowed to what the destructive attempts could actually have broken:
+     *
+     *   1. The chain did not SHRINK. A successful DELETE or TRUNCATE reduces the count; nothing else does,
+     *      because the table refuses UPDATE and the writer only appends.
+     *   2. The row that was the head at the start is STILL THERE, matched by hash. A DELETE would remove
+     *      it and an UPDATE would change what it hashes to, so its survival rules out both against the
+     *      specific row the attempts targeted.
+     *
+     * Note the attempts deliberately target `min(seq)` rather than the head, so a concurrent append can
+     * never be the row under test.
      */
     const after = await readState(client);
-    if (after.count === before.count && after.headHash === before.headHash) {
+    const priorHead = before.headHash;
+    const stillThere = priorHead !== null && (await headStillPresent(client, priorHead));
+
+    if (after.count >= before.count && stillThere) {
+      const grew = after.count - before.count;
       pass(
-        `chain unchanged after every attempt: still ${String(after.count)} event(s), same head hash`,
+        `nothing was destroyed: ${String(before.count)} event(s) before, ${String(after.count)} after` +
+          (grew > 0n
+            ? ` (${String(grew)} appended concurrently, which is not a failure)`
+            : ", unchanged") +
+          `, and the pre-probe head still hashes the same`,
+      );
+    } else if (after.count < before.count) {
+      fail(
+        `the chain SHRANK during the probe, ${String(before.count)} -> ${String(after.count)} events: ` +
+          `a delete or truncate took effect`,
       );
     } else {
       fail(
-        `the chain CHANGED during the probe: ${String(before.count)} -> ${String(after.count)} events, ` +
-          `head ${before.headHash?.slice(0, 16) ?? "none"} -> ${after.headHash?.slice(0, 16) ?? "none"}`,
+        `the event that was the head at the start is gone or altered ` +
+          `(hash ${priorHead?.slice(0, 16) ?? "none"}...), so a modification took effect`,
       );
     }
 

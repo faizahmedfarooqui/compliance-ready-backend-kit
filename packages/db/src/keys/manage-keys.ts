@@ -17,9 +17,6 @@
  * Reads MASTER_DATABASE_URL and KEY_ENCRYPTION_KEY. In production those arrive from KMS / Secrets
  * Manager; locally, from .env.
  */
-import { existsSync } from "node:fs";
-import path from "node:path";
-import { config as readDotenvFile } from "dotenv";
 import {
   LocalKeyProvider,
   generateEncryptionKey,
@@ -27,6 +24,7 @@ import {
   type KeyProvider,
 } from "@compliance-kit/crypto";
 import { ConnectionManager } from "../connection-manager";
+import { loadLocalDotenv } from "../cli/load-dotenv";
 
 type Purpose = "token_signing" | "token_encryption";
 
@@ -207,20 +205,6 @@ function parseArgs(argv: string[]): Record<string, string> {
 }
 
 /** Local development convenience only; skipped under NODE_ENV=production. */
-function loadLocalDotenv(): void {
-  if (process.env.NODE_ENV === "production") return;
-  let dir = process.cwd();
-  for (let level = 0; level < 5; level += 1) {
-    const candidate = path.join(dir, ".env");
-    if (existsSync(candidate)) {
-      readDotenvFile({ path: candidate, quiet: true });
-      return;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) return;
-    dir = parent;
-  }
-}
 
 const USAGE = `
 Manage the deployment's access-token keys.
