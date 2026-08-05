@@ -40,6 +40,7 @@
     "smoke:slowloris": "node scripts/slowloris-probe.mjs",
     "audit:contention": "node packages/db/dist/audit/contention-probe.js",
     "audit:verify": "node packages/db/dist/audit/verify-chain.js",
+    "audit:immutability": "node packages/db/dist/audit/immutability-probe.js",
     "clean:test-tenants": "./scripts/clean-test-tenants.sh"
   },
   "devDependencies": {
