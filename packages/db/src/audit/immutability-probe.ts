@@ -79,14 +79,27 @@ Environment:
 /** The trigger raises `restrict_violation`, which is SQLSTATE 23001. */
 const RESTRICT_VIOLATION = "23001";
 
+/** `unique_violation`. */
+const UNIQUE_VIOLATION = "23505";
+
+/**
+ * The fork guard, named exactly. Defined in the Prisma schema and rendered into
+ * `sql/tenant-schema.sql`; if it is ever renamed there, this probe should fail loudly and point at the
+ * name rather than quietly stop checking anything.
+ */
+const PREV_HASH_UNIQUE = "audit_events_prev_hash_unique";
+
 interface PgError {
   code?: string;
+  /** Populated by node-postgres for a constraint violation, and the precise way to identify which one. */
+  constraint?: string;
   message: string;
 }
 
 function asPgError(err: unknown): PgError {
   if (err instanceof Error) {
-    return { code: (err as Error & { code?: string }).code, message: err.message };
+    const e = err as Error & { code?: string; constraint?: string };
+    return { code: e.code, constraint: e.constraint, message: err.message };
   }
   return { message: String(err) };
 }
@@ -301,15 +314,30 @@ async function main(): Promise<void> {
         );
       }
     } catch (err) {
-      const { code, message } = asPgError(err);
-      // 23505 is unique_violation.
-      if (code === "23505" && message.includes("prev_hash")) {
+      const { code, constraint, message } = asPgError(err);
+      /**
+       * Matched on the CONSTRAINT NAME, not on a substring of the message.
+       *
+       * The previous version tested `message.includes("prev_hash")`, which does in fact work: Postgres
+       * says `duplicate key value violates unique constraint "audit_events_prev_hash_unique"` and the
+       * index name contains that substring, so it matched, and it also correctly failed to match the
+       * OTHER unique index, `audit_events_hash_unique`. Checked against a live violation rather than
+       * assumed, and the probe has passed this assertion on every run.
+       *
+       * It is still the wrong thing to key on. It matched by coincidence of naming, so renaming the index
+       * to something not containing the column name would silently move this to the FAIL branch, and the
+       * message text is not a stable interface. `err.constraint` is populated by node-postgres for
+       * exactly this and names the constraint directly.
+       */
+      if (code === UNIQUE_VIOLATION && constraint === PREV_HASH_UNIQUE) {
         pass(
-          "a duplicate prev_hash is refused by UNIQUE, so the chain cannot fork (SQLSTATE 23505)",
+          `a duplicate prev_hash is refused by ${PREV_HASH_UNIQUE}, so the chain cannot fork ` +
+            `(SQLSTATE ${UNIQUE_VIOLATION})`,
         );
       } else {
         fail(
-          `the fork attempt failed for another reason: SQLSTATE ${code ?? "none"} ${message.slice(0, 200)}`,
+          `the fork attempt failed for another reason: SQLSTATE ${code ?? "none"} ` +
+            `constraint=${constraint ?? "none"} ${message.slice(0, 200)}`,
         );
       }
     } finally {
