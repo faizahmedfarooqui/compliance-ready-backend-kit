@@ -173,8 +173,17 @@ jobs:
           cat /tmp/auth.log
           exit 1
 
+      # Captured, not just run, because the immutability step below needs one of the tenant slugs the
+      # suite provisions and they carry a timestamp. The final line is `... Tenants created: a, b`.
+      #
+      # `set -o pipefail` IS LOAD-BEARING, not boilerplate. GitHub's default shell for `run` is
+      # `bash -e {0}`, WITHOUT pipefail, so the exit status of `pnpm smoke | tee` is tee's status, which
+      # is 0 whatever the suite did. Piping without this would have silently turned the 92-check gate into
+      # a no-op that always passed, which is a worse outcome than not capturing the log at all.
       - name: Smoke test
-        run: pnpm smoke
+        run: |
+          set -euo pipefail
+          pnpm smoke | tee /tmp/smoke.log
 
       # A raw-socket check, so it cannot live in the HTTP smoke test. It reproduces the dribbled-body
       # slowloris attack and asserts the server answers 408 and hangs up.
@@ -222,6 +231,31 @@ jobs:
       # prevented.
       - name: Audit chain holds under concurrent appends
         run: pnpm audit:contention --appends 50
+
+      # The append-only claim itself, which nothing here checked until now. `audit:verify` proves a chain
+      # is internally consistent and the contention probe proves it cannot fork; neither one attempts a
+      # modification, so COMPLIANCE.md's "append-only" row rested on a manual check from 2026-07-30.
+      #
+      # BOTH chains, because the enforcement reaches them by different routes and either can regress on
+      # its own: the master gets sql/audit-immutability.sql inlined into its migration, while a tenant
+      # database gets it applied inside the provisioning transaction. A tenant whose provisioning skipped
+      # it would leave the master passing and every customer's log unprotected.
+      #
+      # Runs after the smoke test for two reasons: the probe refuses an empty chain, since row triggers
+      # never fire when nothing matches, and the tenant it targets is one the suite just provisioned.
+      - name: Audit log refuses modification
+        run: |
+          set -euo pipefail
+          pnpm audit:immutability --master
+
+          # The suite prints `Tenants created: smoke-a-<ts>, smoke-b-<ts>` as its last line.
+          tenant=$(grep -oE 'smoke-a-[0-9]+' /tmp/smoke.log | head -1)
+          if [ -z "$tenant" ]; then
+            echo "::error::could not find a smoke tenant in /tmp/smoke.log, so the tenant chain was not probed"
+            exit 1
+          fi
+          echo "probing tenant chain: $tenant"
+          pnpm audit:immutability --tenant "$tenant"
 
       # The rest of the key lifecycle, after the smoke test rather than before it so revoking a key
       # cannot invalidate a token the smoke test is still using.

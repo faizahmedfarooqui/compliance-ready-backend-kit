@@ -265,7 +265,11 @@ merely "no errors": a run where appends hit the unique constraint and retried wo
 proving the opposite, that the lock did not serialise and the database caught what the application should
 have prevented.
 
-Both are run in CI on every commit.
+Both run in CI on every commit. The immutability probe runs against **both** chains there, the master and
+one of the tenants the smoke suite provisions, because the enforcement reaches them by different routes:
+the master gets the SQL inlined into its migration, a tenant gets it applied inside the provisioning
+transaction. A tenant whose provisioning skipped it would leave the master passing and every customer's
+log unprotected.
 
 ## Control mapping
 

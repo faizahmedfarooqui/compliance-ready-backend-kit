@@ -10,10 +10,18 @@ What is proven, how, and the deliberate decision not to unit test the database l
 | `pnpm smoke` | 92 end-to-end checks | a running service, Postgres, Redis |
 | `pnpm smoke:slowloris` | raw-socket request-timeout probe | a running service |
 | `pnpm audit:contention` | concurrent-append fork probe | Postgres |
-| `pnpm audit:immutability` | append-only enforcement probe | Postgres |
+| `pnpm audit:immutability --master \| --tenant <slug\|uuid>` | append-only enforcement probe | Postgres |
 
 CI runs every one of them on every commit, in two jobs: one that needs no database (lint, format, unit
-tests with coverage) and one that runs against real Postgres and Redis service containers.
+tests with coverage) and one that runs against real Postgres and Redis service containers. The
+database-backed job additionally exercises key rotation and revocation, which is not unit tested for the
+reasons below.
+
+The immutability probe runs there against **both** chains, the master and one of the tenants the smoke
+suite provisions. Both, because the enforcement reaches them by different routes and either can regress
+alone: the master gets `sql/audit-immutability.sql` inlined into its migration, while a tenant database
+gets it applied inside the provisioning transaction. A tenant whose provisioning skipped it would leave
+the master passing and every customer's log unprotected.
 
 ## The rule these suites are built around
 
