@@ -92,10 +92,10 @@ export class ProblemDetailsSchema {
 
   @ApiProperty({
     example:
-      "https://github.com/faizahmedfarooqui/compliance-ready-backend-kit/blob/main/docs/problems.md#tenant-not-found",
+      "https://github.com/faizahmedfarooqui/compliance-ready-backend-kit/blob/main/problems.md#tenant-not-found",
     description:
       "URI identifying the problem TYPE (RFC 9457 s3.1.1). Dereferencing it yields documentation " +
-      "for this exact problem, in docs/problems.md.",
+      "for this exact problem, in problems.md.",
   })
   type!: string;
 

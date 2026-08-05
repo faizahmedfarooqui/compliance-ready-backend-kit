@@ -98,7 +98,7 @@ export interface ProblemDetails {
   success: false;
   /**
    * URI reference identifying the problem TYPE (§3.1.1). Dereferencing it should yield
-   * human-readable documentation, which is why it points into docs/problems.md. The RFC
+   * human-readable documentation, which is why it points into problems.md. The RFC
    * recommends absolute URIs, so the base is configurable rather than a bare relative path.
    */
   type: string;

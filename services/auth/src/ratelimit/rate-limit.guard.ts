@@ -113,7 +113,7 @@ export class RateLimitGuard implements CanActivate {
     /**
      * This runs TWICE on a route with its own budget, so the two branches have to undo each other or
      * the response ends up carrying both a budget and the degraded flag. That combination contradicts
-     * docs/problems.md and, worse, tells a client a limit was checked when it was not.
+     * problems.md and, worse, tells a client a limit was checked when it was not.
      */
     if (result.degraded) {
       // Nothing truthful to report: sending limit and remaining would state a budget that was never

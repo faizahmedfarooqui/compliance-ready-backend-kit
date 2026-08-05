@@ -53,7 +53,7 @@ const schema = z.object({
   problemTypeBaseUri: z
     .url()
     .default(
-      "https://github.com/faizahmedfarooqui/compliance-ready-backend-kit/blob/main/docs/problems.md",
+      "https://github.com/faizahmedfarooqui/compliance-ready-backend-kit/blob/main/problems.md",
     ),
 
   jwtIssuer: z.string().min(1),
