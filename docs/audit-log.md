@@ -241,7 +241,7 @@ against the wrong database is the most misleading output the tool could produce.
 Two probes, each covering something the other structurally cannot.
 
 ```bash
-pnpm audit:immutability --master         # or --tenant <slug>
+pnpm audit:immutability --master         # or --tenant <slug|uuid>
 ```
 
 Attempts UPDATE, DELETE and TRUNCATE, plus a duplicate `prev_hash`, and requires each to be refused with

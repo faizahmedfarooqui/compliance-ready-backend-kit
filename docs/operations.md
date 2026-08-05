@@ -34,7 +34,7 @@ Every command, and the runbooks for the things you will actually need to do.
 | `pnpm db:migrate:dev` | Create a new master migration |
 | `pnpm db:generate` | Regenerate both Prisma clients |
 | `pnpm db:tenant-ddl` | Re-render `packages/db/sql/tenant-schema.sql` from the tenant schema |
-| `pnpm db:seed:admin --tenant <slug> --email <email>` | Seed a tenant's first admin. Password from `SEED_ADMIN_PASSWORD` |
+| `pnpm db:seed:admin --tenant <slug\|uuid> --email <email>` | Seed a tenant's first admin. Password from `SEED_ADMIN_PASSWORD` |
 | `pnpm clean:test-tenants` | Drop leftover `tenant_smoke_*` databases. Dry run unless `--yes` |
 
 ### Keys
@@ -52,8 +52,8 @@ Every command, and the runbooks for the things you will actually need to do.
 | Command | Does |
 | --- | --- |
 | `pnpm audit:verify --master` | Verify the control-plane chain |
-| `pnpm audit:verify --tenant <slug>` | Verify one tenant's chain |
-| `pnpm audit:immutability --master\|--tenant <slug>` | Prove the log refuses UPDATE, DELETE, TRUNCATE |
+| `pnpm audit:verify --tenant <slug\|uuid>` | Verify one tenant's chain |
+| `pnpm audit:immutability --master\|--tenant <slug\|uuid>` | Prove the log refuses UPDATE, DELETE, TRUNCATE |
 | `pnpm audit:contention --appends 50` | Prove concurrent appends cannot fork the chain |
 
 ### Tests
@@ -137,11 +137,11 @@ pass vacuously.
 
 ### Investigate a suspected tampering
 
-1. `pnpm audit:verify --tenant <slug>`. A reported break names the first bad `seq`.
+1. `pnpm audit:verify --tenant <slug|uuid>`. A reported break names the first bad `seq`.
 2. Compare the printed head hash with your externally recorded value. If the chain verifies but the head
    differs from what you recorded, that is a **full rewrite**, which is exactly the case the chain alone
    cannot see.
-3. `pnpm audit:immutability --tenant <slug>` to check the enforcement is still in place. A trigger that has
+3. `pnpm audit:immutability --tenant <slug|uuid>` to check the enforcement is still in place. A trigger that has
    been dropped is how a rewrite became possible.
 4. Search logs for `AUDIT APPEND FAILED`. Appends fail open, so a gap may be an outage rather than an
    attack, and that log line carries every field needed to reconstruct what was not recorded.

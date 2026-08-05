@@ -231,7 +231,7 @@ Three things worth knowing:
 | `GET` | `/.well-known/jwks.json` | none | Public verification keys. A bare JWK Set, deliberately not enveloped |
 | `GET` | `/docs` | none | OpenAPI UI. Document at `/docs/openapi.json` and `/docs/openapi.yaml` |
 
-Operator commands: `pnpm audit:verify --master` or `--tenant <slug>` walks a chain and reports the
+Operator commands: `pnpm audit:verify --master` or `--tenant <slug|uuid>` walks a chain and reports the
 first break; `pnpm audit:contention` fires concurrent appends and asserts the chain cannot fork.
 
 All bodies follow the response contract above, except `/.well-known/jwks.json`. Error bodies are
