@@ -27,8 +27,10 @@ reference, operations runbooks, and how every claim above is verified.
 > assessment (a QSA or SAQ for PCI, a licensed CPA firm for a SOC 2 report). Deploying
 > this repository satisfies none of those on its own.
 >
-> It is also **early**: v0.2, young, unaudited by anyone but its author, and carrying the known
-> gaps listed under [Status](#status). Read that section before putting it near real data.
+> It is also **early**. The published package is still `0.1.0`; the v0.2 milestone below is
+> complete in the code but nothing has been released under that number. It is unaudited by anyone
+> but its author and carries the known gaps listed under [Status](#status). Read that section
+> before putting it near real data.
 
 ## Why database-per-tenant
 
