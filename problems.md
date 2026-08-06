@@ -10,7 +10,7 @@ so do not rename one without treating it as a breaking change.
 ```json
 {
   "success": false,
-  "type": "https://github.com/faizahmedfarooqui/compliance-ready-backend-kit/blob/main/docs/problems.md#tenant-not-found",
+  "type": "https://github.com/faizahmedfarooqui/compliance-ready-backend-kit/blob/main/problems.md#tenant-not-found",
   "title": "Unknown or inactive tenant",
   "status": 404,
   "detail": "Unknown or inactive tenant: acme",

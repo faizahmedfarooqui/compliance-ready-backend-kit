@@ -18,9 +18,6 @@
  *   pnpm keys:decode <token>
  *   echo "$TOKEN" | pnpm keys:decode
  */
-import { existsSync } from "node:fs";
-import path from "node:path";
-import { config as readDotenvFile } from "dotenv";
 import {
   LocalKeyProvider,
   importVerificationKey,
@@ -31,22 +28,9 @@ import {
   type SigningKeyResolver,
 } from "@compliance-kit/crypto";
 import { ConnectionManager } from "../connection-manager";
+import { loadLocalDotenv } from "../cli/load-dotenv";
 
 /** Local development convenience only; skipped under NODE_ENV=production. */
-function loadLocalDotenv(): void {
-  if (process.env.NODE_ENV === "production") return;
-  let dir = process.cwd();
-  for (let level = 0; level < 5; level += 1) {
-    const candidate = path.join(dir, ".env");
-    if (existsSync(candidate)) {
-      readDotenvFile({ path: candidate, quiet: true });
-      return;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) return;
-    dir = parent;
-  }
-}
 
 async function readToken(): Promise<string> {
   const arg = process.argv.slice(2).find((a) => !a.startsWith("--"));

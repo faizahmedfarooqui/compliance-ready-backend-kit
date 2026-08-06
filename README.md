@@ -1,19 +1,23 @@
 # compliance-ready-backend-kit
 
 **A NestJS + Postgres baseline built as a controls list, not a feature list: Postgres-enforced
-tenant isolation, RBAC, and encrypted access tokens, each mapped to the named HIPAA / PCI-DSS /
-SOC 2 control an assessor will ask about, and each marked implemented or not.**
+tenant isolation, RBAC, encrypted access tokens, and an append-only hash-chained audit log, each
+mapped to the named HIPAA / PCI-DSS / SOC 2 control an assessor will ask about, and each marked
+implemented or not.**
 
 Most NestJS starters give you a feature list. This one gives you a **controls list**: every
 capability maps to a named control in HIPAA (45 CFR Part 164), PCI-DSS v4.0.1, or the AICPA
 Trust Services Criteria, fact-checked against the primary sources.
 
 **And it tells you which of them actually exist.** The mapping in
-[COMPLIANCE.md](./COMPLIANCE.md) carries a Status column: five controls are implemented, three are
-partial, and five are not built yet. A control mapping without that column is a marketing
-document, because the reader cannot tell a shipped control from an intention. Audit logging is
-currently in the "not built yet" list, which is why this page no longer describes the kit as
-audit-ready.
+[COMPLIANCE.md](./COMPLIANCE.md) carries a Status column: of sixteen rows, **nine are implemented**,
+three are partial, two are not implemented, and two are deliberately outside this repository. A
+control mapping without that column is a marketing document, because the reader cannot tell a shipped
+control from an intention.
+
+**Documentation is in [docs/](docs/README.md)**, organised by task: getting started, configuration,
+multi-tenancy, authentication, authorization, key management, the audit log, rate limiting, the API
+reference, operations runbooks, and how every claim above is verified.
 
 > ### Read this before you rely on it
 >
@@ -23,8 +27,10 @@ audit-ready.
 > assessment (a QSA or SAQ for PCI, a licensed CPA firm for a SOC 2 report). Deploying
 > this repository satisfies none of those on its own.
 >
-> It is also **v0.1**: young, unaudited by anyone but its author, and carrying the known
-> gaps listed under [Status](#status). Read that section before putting it near real data.
+> It is also **early**. The published package is still `0.1.0`; the v0.2 milestone below is
+> complete in the code but nothing has been released under that number. It is unaudited by anyone
+> but its author and carries the known gaps listed under [Status](#status). Read that section
+> before putting it near real data.
 
 ## Why database-per-tenant
 
@@ -107,15 +113,24 @@ cp .env.example .env          # non-secret local defaults
 pnpm install                  # also generates the Prisma clients
 pnpm infra:up                 # Postgres + Redis (ports 55432 / 56379)
 pnpm db:migrate               # apply the master schema
+pnpm keys:init                # generate the token signing + encryption keys
 pnpm build
 pnpm start:auth               # listens on :3011
 ```
 
+`pnpm keys:init` is not optional. Tokens are signed with keys held in `config_keys`, that table
+starts empty, and a service with no active signing key boots cleanly and then fails every login.
+
 Then, in another shell:
 
 ```bash
-pnpm smoke                    # 66 end-to-end checks, including isolation and token forgery
+export CONTROL_PLANE_API_KEY='<the value from your .env>'
+pnpm smoke                    # 92 end-to-end checks, including isolation and token forgery
 ```
+
+The smoke script reads that credential from the **shell**, not from `.env`, because CI has no `.env`
+file. Without the export, provisioning returns 401 and about a dozen checks fail in a way that looks
+like a broken install.
 
 The ports deliberately avoid 5432, 6379, 3000, and 3001. A compliance kit is usually
 evaluated on a laptop that already runs another Postgres, and a port collision on first
@@ -133,9 +148,11 @@ To wipe local state and start over: `pnpm infra:reset`.
 ### By hand
 
 ```bash
-# 1. Provision a tenant. Creates its database, applies the schema, seeds the RBAC
-#    catalogue, then marks the tenant active. Creates no users.
+# 1. Provision a tenant. Creates its database, applies the schema and the audit-log
+#    triggers, seeds the RBAC catalogue, then marks the tenant active. Creates no users.
+#    This route creates databases, so it needs the control-plane credential.
 curl -X POST localhost:3011/api/tenants -H 'content-type: application/json' \
+  -H "authorization: Bearer $CONTROL_PLANE_API_KEY" \
   -d '{"slug":"acme","name":"Acme Inc"}'
 
 # 2. Seed that tenant's first administrator. A separate, deliberate step: see below.
@@ -152,13 +169,16 @@ curl localhost:3011/api/users -H 'x-tenant-id: acme' -H "authorization: Bearer $
 
 # The token is encrypted, so you cannot read it in a JWT decoder. To inspect one you
 # hold the keys for (this fully verifies both layers, it is not a decoder):
-node scripts/decode-token.mjs "$TOKEN"
+pnpm keys:decode "$TOKEN"
 ```
+
+Full walkthrough, including the two steps that fail confusingly when skipped, in
+[docs/getting-started.md](docs/getting-started.md).
 
 ## The response contract
 
 Every response follows one of exactly two shapes. Full detail, including the error catalogue
-and the status code table, is in [docs/problems.md](docs/problems.md).
+and the status code table, is in [problems.md](problems.md).
 
 **Success** is always `{ success, data, meta }`. `data` is the resource itself, unwrapped, and
 `meta` is always present even when empty, so a client never has to test for it. List responses
@@ -174,7 +194,7 @@ get `meta.totalCount` for free.
 `application/problem+json`:
 
 ```json
-{ "type": "https://.../docs/problems.md#tenant-not-found",
+{ "type": "https://.../problems.md#tenant-not-found",
   "title": "Unknown or inactive tenant",
   "status": 404,
   "detail": "Unknown or inactive tenant: acme",
@@ -211,7 +231,7 @@ Three things worth knowing:
 | `GET` | `/.well-known/jwks.json` | none | Public verification keys. A bare JWK Set, deliberately not enveloped |
 | `GET` | `/docs` | none | OpenAPI UI. Document at `/docs/openapi.json` and `/docs/openapi.yaml` |
 
-Operator commands: `pnpm audit:verify --master` or `--tenant <slug>` walks a chain and reports the
+Operator commands: `pnpm audit:verify --master` or `--tenant <slug|uuid>` walks a chain and reports the
 first break; `pnpm audit:contention` fires concurrent appends and asserts the chain cannot fork.
 
 All bodies follow the response contract above, except `/.well-known/jwks.json`. Error bodies are
@@ -410,18 +430,20 @@ its administrator.
 
 ```
 packages/
-  common/    domain types, the permission catalogue, domain errors
+  common/    domain types, the permission catalogue, the wire contract, domain errors
   config/    zod-validated typed config, fails fast at boot
-  crypto/    Argon2id password hashing + nested-JWT issue/verify. No framework deps
+  crypto/    Argon2id password hashing, nested-JWT issue/verify, key material, audit
+             hashing. No framework deps
   db/        Prisma schemas (master + tenant), generated clients, ConnectionManager,
-             tenant admin seed script
+             the audit writer, operator CLIs, tenant admin seed script
 services/
-  auth/      NestJS + Fastify: tenancy, auth, RBAC, control-plane provisioning
+  auth/      NestJS + Fastify: tenancy, auth, RBAC, audit, rate limiting, control plane
 scripts/
-  smoke-test.sh
-  decode-token.mjs
-docs/
-  problems.md    error catalogue + status codes; RFC 9457 `type` URIs resolve here
+  smoke-test.sh       92 end-to-end checks
+  slowloris-probe.mjs raw-socket request-timeout probe
+  clean-test-tenants.sh, stop-auth.sh
+docs/            the documentation set; start at docs/README.md
+problems.md      error catalogue + status codes; RFC 9457 `type` URIs resolve here
 ```
 
 `packages/crypto` exists so that the two things which must never disagree cannot: the

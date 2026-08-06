@@ -149,7 +149,7 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     };
   }
 
-  /** e.g. TENANT_NOT_FOUND -> https://.../docs/problems.md#tenant-not-found */
+  /** e.g. TENANT_NOT_FOUND -> https://.../problems.md#tenant-not-found */
   private typeUri(code: string): string {
     return `${this.config.problemTypeBaseUri}#${code.toLowerCase().replaceAll("_", "-")}`;
   }

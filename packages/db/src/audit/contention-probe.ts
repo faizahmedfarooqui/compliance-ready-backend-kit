@@ -18,29 +18,12 @@
  *
  * Usage: node packages/db/dist/audit/contention-probe.js [--appends 50]
  */
-import { existsSync } from "node:fs";
-import path from "node:path";
-import { config as readDotenvFile } from "dotenv";
 import { Client } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { GENESIS_HASH, computeAuditHash } from "@compliance-kit/crypto";
 import { PrismaClient } from "../generated/master/client";
 import { appendAuditEvent } from "./audit-writer";
-
-function loadLocalDotenv(): void {
-  if (process.env.NODE_ENV === "production") return;
-  let dir = process.cwd();
-  for (let level = 0; level < 5; level += 1) {
-    const candidate = path.join(dir, ".env");
-    if (existsSync(candidate)) {
-      readDotenvFile({ path: candidate, quiet: true });
-      return;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) return;
-    dir = parent;
-  }
-}
+import { loadLocalDotenv } from "../cli/load-dotenv";
 
 interface EventRow {
   seq: string;

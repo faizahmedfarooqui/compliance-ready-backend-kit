@@ -217,7 +217,7 @@ To add a problem type:
    `detail`.
 2. Map the code to a status in `STATUS_BY_ERROR` in
    `services/auth/src/common/problem-details.filter.ts`. Unmapped domain errors fall back to 400.
-3. Document it in [docs/problems.md](./docs/problems.md) under a heading whose anchor is the
+3. Document it in [problems.md](./problems.md) under a heading whose anchor is the
    code in kebab-case. The `type` URI is derived from the code, so a missing section means the
    URI points at a heading that does not exist. The smoke test checks this.
 4. Add a smoke-test assertion.

@@ -21,12 +21,10 @@
  * Idempotent: re-running for an existing user grants the role without touching the
  * password, so it is safe to use to repair a tenant that lost its administrator.
  */
-import { existsSync } from "node:fs";
-import path from "node:path";
-import { config as readDotenvFile } from "dotenv";
 import { hashPassword } from "@compliance-kit/crypto";
 import { TENANT_ADMIN_ROLE_NAME } from "@compliance-kit/common";
 import { ConnectionManager } from "../connection-manager";
+import { loadLocalDotenv } from "../cli/load-dotenv";
 
 export interface SeedTenantAdminInput {
   /** Tenant id or slug, as accepted by ConnectionManager.resolveTenant. */
@@ -110,20 +108,6 @@ function parseArgs(argv: string[]): Record<string, string> {
 }
 
 /** Local development convenience only; skipped under NODE_ENV=production. */
-function loadLocalDotenv(): void {
-  if (process.env.NODE_ENV === "production") return;
-  let dir = process.cwd();
-  for (let level = 0; level < 5; level += 1) {
-    const candidate = path.join(dir, ".env");
-    if (existsSync(candidate)) {
-      readDotenvFile({ path: candidate, quiet: true });
-      return;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) return;
-    dir = parent;
-  }
-}
 
 const USAGE = `
 Seed a tenant's first administrator.

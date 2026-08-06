@@ -493,15 +493,15 @@ jq -e '.instance | test("^urn:uuid:[0-9a-f-]{36}$")' /tmp/smoke-body >/dev/null 
 [ "$(jq -r '.instance' /tmp/smoke-body)" = "urn:uuid:$(jq -r '.traceId' /tmp/smoke-body)" ] \
   && pass "traceId matches the instance uuid" \
   || fail "traceId and instance disagree: $(cat /tmp/smoke-body)"
-# The type URI must resolve to a heading that exists in docs/problems.md, or the RFC's promise
+# The type URI must resolve to a heading that exists in problems.md, or the RFC's promise
 # that dereferencing it yields documentation is a lie.
 anchor=$(jq -r '.type' /tmp/smoke-body | sed 's/.*#//')
 [ "$anchor" = "tenant-not-found" ] \
   && pass "type URI anchor is derived from the code" \
   || fail "unexpected type anchor: $anchor"
-grep -q "^### \`$anchor\`" "$REPO_ROOT/docs/problems.md" \
-  && pass "docs/problems.md documents the '$anchor' anchor the type URI points at" \
-  || fail "docs/problems.md has no section for anchor '$anchor'"
+grep -q "^### \`$anchor\`" "$REPO_ROOT/problems.md" \
+  && pass "problems.md documents the '$anchor' anchor the type URI points at" \
+  || fail "problems.md has no section for anchor '$anchor'"
 
 step "16. The published JWKS is a JWKS, and only the public halves"
 # Checked over the wire rather than by unit test because the failure this catches was invisible from
@@ -604,18 +604,18 @@ jq -e '.components.securitySchemes.accessToken and .components.securitySchemes.c
   && pass "the user token and the control-plane credential are separate security schemes" \
   || fail "security schemes missing or collapsed into one"
 
-# Every documented error code must have a section in docs/problems.md, since the type URI points there.
+# Every documented error code must have a section in problems.md, since the type URI points there.
 missing_docs=""
 for code in $(jq -r '[.paths[] | .[] | .responses | to_entries[]
                       | select(.key | test("^[45]"))
                       | .value.description
                       | capture("`code`: `(?<c>[A-Z_]+)`").c ] | unique | .[]' /tmp/smoke-spec); do
   anchor=$(printf '%s' "$code" | tr 'A-Z_' 'a-z-')
-  grep -q "^### \`$anchor\`" "$REPO_ROOT/docs/problems.md" || missing_docs="$missing_docs $anchor"
+  grep -q "^### \`$anchor\`" "$REPO_ROOT/problems.md" || missing_docs="$missing_docs $anchor"
 done
 [ -z "$missing_docs" ] \
-  && pass "every error code in the spec has a section in docs/problems.md" \
-  || fail "codes documented in the spec but not in docs/problems.md:$missing_docs"
+  && pass "every error code in the spec has a section in problems.md" \
+  || fail "codes documented in the spec but not in problems.md:$missing_docs"
 
 step "18. The audit log recorded what just happened, and its chain verifies"
 # Asserted over the wire-adjacent path rather than by reading the table directly, because the point is

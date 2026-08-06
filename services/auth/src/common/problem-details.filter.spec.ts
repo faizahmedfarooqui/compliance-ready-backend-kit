@@ -158,7 +158,7 @@ describe("ProblemDetailsFilter", () => {
       expect(body?.code).toBe("CONTROL_PLANE_UNAUTHORIZED");
     });
 
-    // The type URI has to resolve to a real heading in docs/problems.md, or RFC 9457's promise that
+    // The type URI has to resolve to a real heading in problems.md, or RFC 9457's promise that
     // dereferencing it yields documentation is false.
     it("point their type URI at the documented anchor", () => {
       const { body } = capture(new ControlPlaneUnauthorizedError());
