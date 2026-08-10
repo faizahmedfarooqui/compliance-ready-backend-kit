@@ -102,14 +102,38 @@ alone. Verified by confirming both `fastify` and `@nestjs/platform-fastify` now 
 Adding OpenAPI documentation in v0.2 flagged a second one:
 [GHSA-pm4m-ph32-ghv5](https://github.com/advisories/GHSA-pm4m-ph32-ghv5), exponential parsing time in
 `js-yaml` flow collections, reachable through `@nestjs/swagger`. Fixed the same way, with
-`"js-yaml@5": "^5.2.2"` scoped to the 5.x line so the unrelated 4.x consumer in the tooling is
-untouched, and verified by resolving 5.2.2 and confirming `/docs/openapi.yaml` still renders.
+`"js-yaml@5": "^5.2.2"` scoped to the 5.x line, which at the time left the unrelated 4.x consumer in
+the tooling alone, and verified by resolving 5.2.2 and confirming `/docs/openapi.yaml` still renders.
 
 Worth noting what the exposure actually was, because "high" and "exposed" are not the same thing: the
 advisory is about PARSING adversarial YAML, and this service only ever SERIALISES its own OpenAPI
 document. There was no path by which a caller's input reached the parser. It was still fixed rather
 than annotated, because an accurate dependency inventory is worth more than an argument, and the next
 person to add a YAML-parsing feature should inherit a patched version rather than that argument.
+
+The weekly pass on 2026-08-10 came back for the 4.x consumer that the `js-yaml@5` override had left
+alone: [GHSA-5p4m-2wfm-xmqj](https://github.com/advisories/GHSA-5p4m-2wfm-xmqj), quadratic CPU
+consumption resolving the `!!omap` tag, covering `>=4.0.0 <4.3.1`. It arrives through `@nestjs/cli`,
+`fork-ts-checker-webpack-plugin` and `cosmiconfig`, so like `brace-expansion` it is build-time tooling
+rather than the request path. Fixed with `"js-yaml@4": "^4.3.1"` on the same reasoning as the
+paragraph above, and for one more: the audit gate does not grade on reachability, and teaching it to
+would mean deciding, every week and by hand, which advisories are allowed to stay red.
+
+### One override that is not an advisory fix
+
+`"fastify@5": "^5.11.0"` is version alignment, not remediation, and is recorded here so every entry in
+`pnpm.overrides` has a reason attached. `@nestjs/platform-fastify` depends on `fastify` exactly, at
+`5.10.0`, so the adapter, not this repo's `services/auth` dependency, decides which Fastify actually
+serves requests. Bumping the direct dependency alone therefore moved only the type definitions the
+code compiles against, leaving two Fastify copies in the tree and 5.11.0 types describing a 5.10.0
+server, which is a small instance of the skew that keeps `@types/node` majors pinned. The override
+collapses both to 5.11.0 and picks up 5.11.0's fix for honouring quoted strings in `Content-Type`
+parameter values, a parameter this service reads on every request and the same class of parsing bug
+behind four Fastify advisories. Verified the way the `find-my-way` override was, by resolution:
+`pnpm why fastify -r` reports 5.11.0 for both `services/auth` and `@nestjs/platform-fastify`, and one
+`fastify@5.11.0` remains in the lockfile. The cost, stated plainly, is that the adapter now runs
+against a Fastify minor its own maintainers did not pin, which is why the end-to-end smoke test
+matters more than usual here.
 
 ## What this project is not
 

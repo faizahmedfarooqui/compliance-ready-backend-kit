@@ -29,6 +29,22 @@ import { REDIS } from "./tokens";
       inject: [CONFIG],
       useFactory: (config: AppConfig): Redis => {
         const logger = new Logger("Redis");
+        /**
+         * No `protocol` option, which is a decision rather than an omission: ioredis 6 negotiates
+         * RESP3 by default, and that requires a server answering `HELLO`, so Redis 6 or newer. Compose
+         * and CI both run Redis 7, so the default stands. Point this at anything older, ElastiCache on
+         * Redis 5 included, and every command fails at the handshake; `protocol: 2` is the escape
+         * hatch.
+         *
+         * The limiter's Lua is unaffected, but by construction rather than by luck, and the
+         * construction is easy to undo. Redis converts a script's return value according to the
+         * CLIENT's protocol, and RESP3 adds cases for Lua booleans, nils, and tables tagged map, set
+         * or double. Both scripts return indexed tables of plain numbers, which become an array of
+         * integers under either protocol. Return `true`/`false` for the allowed flag instead and RESP3
+         * delivers real booleans where RESP2 delivered 1 and null, so `allowed === 1` in
+         * RateLimitStore.consume silently starts rejecting every request: compiles, passes the unit
+         * tests, and inverts the control. Keep returning numbers.
+         */
         const client = new Redis(config.redisUrl, {
           /**
            * The three options below exist so a Redis outage degrades the limiter rather than hanging
