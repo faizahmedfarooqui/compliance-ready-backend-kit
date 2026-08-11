@@ -92,12 +92,33 @@ catches a stray `GRANT` and does not confirm the `REVOKE`.
 `packages/db/sql/restricted-role.sql` fixes that. Create the role out of band, because no file in this
 repository may contain a credential:
 
+```
+$ psql "$MASTER_DATABASE_URL"
+=# CREATE ROLE crbk_app LOGIN;
+=# \password crbk_app
+Enter new password for user "crbk_app": ...
+```
+
+**Do not pass the password on the command line.** `psql -c "CREATE ROLE ... PASSWORD '...'"` puts the
+secret into your shell history, and on some systems into the process list where any local user can read
+it. psql's `\password` prompts for it and sends an `ALTER ROLE` with the value already hashed, so the
+plaintext never reaches history, the process table, or the server log. A provisioning tool reading from
+your secret manager is equally fine; a `-c` one-liner is not.
+
+Then apply the grants, once per database, **as a role that owns the tables** and not as `crbk_app`:
+
 ```bash
-psql "$MASTER_DATABASE_URL" -c "CREATE ROLE crbk_app LOGIN PASSWORD '<from your secret store>'"
 psql "$MASTER_DATABASE_URL" -f packages/db/sql/restricted-role.sql
 # and once per tenant database
 psql "$TENANT_CLUSTER_URL/tenant_acme" -f packages/db/sql/restricted-role.sql
 ```
+
+The file refuses to run if it would be decorative: it raises if `crbk_app` is a superuser, and if
+`crbk_app` owns `audit_events`. An owner keeps `UPDATE`, `DELETE` and `TRUNCATE` no matter what is
+revoked, so in either case every grant would succeed while enforcing nothing, and a clean run would be
+the only evidence you got. That is the failure mode this check exists to make impossible, and owning the
+table is not hypothetical: it is exactly what happens if `crbk_app` is given `CREATEDB` and allowed to
+provision, since whoever creates the tables owns them.
 
 Then point the service's `MASTER_DATABASE_URL` and `TENANT_CLUSTER_URL` at `crbk_app` rather than at
 the owner.

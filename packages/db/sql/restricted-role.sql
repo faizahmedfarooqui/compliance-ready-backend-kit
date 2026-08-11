@@ -31,8 +31,46 @@ DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'crbk_app') THEN
     RAISE EXCEPTION
-      'role crbk_app does not exist. Create it first (CREATE ROLE crbk_app LOGIN PASSWORD ...), '
-      'setting the password from your secret store rather than from a file. See docs/deployment.md.';
+      'role crbk_app does not exist. Create it first (CREATE ROLE crbk_app LOGIN, then \password '
+      'crbk_app in psql so the secret never reaches your shell history). See docs/deployment.md.';
+  END IF;
+END
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Refuse to run at all if the grants below would be decorative.
+--
+-- This is the check that keeps the file honest, and it was missing until review pointed it out. A
+-- table OWNER implicitly keeps UPDATE, DELETE and TRUNCATE no matter what is revoked, and a superuser
+-- ignores privileges entirely. In either case every statement here would succeed, the operator would
+-- see a clean run, and the privilege boundary would not exist. A script that reports success while
+-- enforcing nothing is worse than one that fails, because the failure is the only signal available.
+--
+-- Owning `audit_events` is not a hypothetical for this role either: it is what happens if crbk_app is
+-- ever handed CREATEDB and allowed to provision a tenant, since whoever creates the tables owns them.
+-- That is the exact trade-off documented in docs/deployment.md, and this is where it gets caught.
+-- ---------------------------------------------------------------------------
+DO $$
+DECLARE
+  owner_name text;
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'crbk_app' AND rolsuper) THEN
+    RAISE EXCEPTION
+      'crbk_app is a SUPERUSER, so privileges do not apply to it and every grant in this file would '
+      'be decorative. Recreate it without SUPERUSER.';
+  END IF;
+
+  IF to_regclass('public.audit_events') IS NOT NULL THEN
+    SELECT pg_get_userbyid(relowner) INTO owner_name
+      FROM pg_class WHERE oid = 'public.audit_events'::regclass;
+
+    IF owner_name = 'crbk_app' THEN
+      RAISE EXCEPTION
+        'crbk_app OWNS audit_events in this database, and an owner keeps UPDATE, DELETE and TRUNCATE '
+        'regardless of REVOKE. The append-only boundary cannot be enforced against the owner. Apply '
+        'this file as a different role that owns the tables, or reassign ownership. See '
+        'docs/deployment.md on why provisioning and serving want different privileges.';
+    END IF;
   END IF;
 END
 $$;
@@ -96,9 +134,29 @@ GRANT SELECT, INSERT ON public.audit_events TO crbk_app;
 -- safe to re-run over a database whose history nobody remembers.
 REVOKE UPDATE, DELETE, TRUNCATE ON public.audit_events FROM crbk_app;
 
--- The seq column is an identity/serial, so INSERT needs the sequence. USAGE covers nextval and is the
--- narrowest grant that works: SELECT and UPDATE on a sequence are not required to append.
-GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO crbk_app;
+-- The seq column is a serial, so INSERT needs its sequence. USAGE covers nextval and is the narrowest
+-- privilege that works: SELECT and UPDATE on a sequence are not required to append.
+--
+-- Scoped to THAT ONE SEQUENCE rather than `ON ALL SEQUENCES IN SCHEMA public`, which review flagged as
+-- broader than necessary and which would silently pick up every sequence added later. Every other id
+-- in both schemas is a gen_random_uuid() default, so audit_events.seq is the only sequence in play.
+-- pg_get_serial_sequence resolves the name rather than hardcoding audit_events_seq_seq, so a rename
+-- upstream cannot leave this granting nothing while still reporting success.
+DO $$
+DECLARE
+  seq_name text;
+BEGIN
+  IF to_regclass('public.audit_events') IS NOT NULL THEN
+    seq_name := pg_get_serial_sequence('public.audit_events', 'seq');
+    IF seq_name IS NULL THEN
+      RAISE EXCEPTION
+        'audit_events.seq has no owned sequence, so INSERT would fail for crbk_app. The column type '
+        'changed and this file needs updating.';
+    END IF;
+    EXECUTE format('GRANT USAGE ON SEQUENCE %s TO crbk_app', seq_name);
+  END IF;
+END
+$$;
 
 -- ---------------------------------------------------------------------------
 -- NOT GRANTED, each for a reason worth reading before "fixing" it.
