@@ -147,6 +147,24 @@ Fixing an advisory with a transitive dependency:
 `fail-on-severity`, not deleting the step. A dev-only path is a reason to say so in the commit
 message, not a reason to stop failing: the gate is the evidence the control exists.
 
+### An override takes that version out of Dependabot's hands
+
+This is the trap that closes behind you a week later. An override range is not a floor that drifts
+upward: once `"fastify@5": "^5.11.0"` exists, 5.11.0 satisfies it, so a Dependabot PR raising the
+declaring package to `^5.11.3` changes the lockfile not at all. It looks merged and does nothing,
+which is worse than failing, and CI cannot see it because everything still passes.
+
+So for any package with an override, treat the override as the version's single source of truth:
+bump it in the same commit, and confirm by resolution rather than by the PR's diff.
+
+```bash
+pnpm why <pkg> -r | grep -A1 <dependent>    # reports the version you actually intended?
+grep -E '^  <pkg>@[0-9]' pnpm-lock.yaml     # exactly one line, or you have two copies
+```
+
+Worth checking the whole override block whenever a Dependabot PR touches a package that appears in
+it, since the same silence applies to every entry.
+
 ## Step 5: verify the combined result, then land it as one change
 
 With a shared lockfile, N PRs each rewrite it, so merging them serially costs N
