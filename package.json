@@ -1,6 +1,6 @@
 {
   "name": "@faizahmed/compliance-ready-backend-kit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "A NestJS + Postgres backend baseline built as a controls list, not a feature list: database-per-tenant isolation, RBAC, and nested-JWT access tokens, each mapped to a named HIPAA / PCI-DSS / SOC 2 control and marked implemented or not.",
   "license": "MIT",
