@@ -163,7 +163,13 @@ Then run the repo's full gate locally before pushing, because CI ran each PR in 
 never ran the combination:
 
 ```bash
-pnpm install --frozen-lockfile   # then plain `pnpm install` if you changed package.json
+# Pick ONE install. A frozen install verifies the lockfile still matches package.json, so use it
+# when you have only combined already-locked branches. The moment you edit package.json yourself
+# (adding an override, say) it is SUPPOSED to fail, because the two now disagree: switch to a plain
+# `pnpm install` to rewrite the lockfile, and read the resulting diff.
+pnpm install --frozen-lockfile   # unchanged package.json
+pnpm install                     # you edited package.json
+
 pnpm build && pnpm typecheck && pnpm lint && pnpm format:check && pnpm test
 pnpm audit --audit-level=high
 git diff main --stat             # confirm only the files you expect
