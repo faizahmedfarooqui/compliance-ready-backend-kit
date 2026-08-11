@@ -126,11 +126,23 @@ Then, in another shell:
 ```bash
 export CONTROL_PLANE_API_KEY='<the value from your .env>'
 pnpm smoke                    # 92 end-to-end checks, including isolation and token forgery
+pnpm verify:claims            # the same evidence, reported per compliance control
 ```
 
 The smoke script reads that credential from the **shell**, not from `.env`, because CI has no `.env`
 file. Without the export, provisioning returns 401 and about a dozen checks fail in a way that looks
 like a broken install.
+
+`pnpm verify:claims` is the one to run if you are evaluating rather than developing. It executes the
+smoke suite, both audit probes, the slowloris probe, the unit tests and `pnpm audit`, then reports
+each result grouped by the control it supports, with that control's HIPAA, PCI-DSS and SOC 2 citation
+alongside: 51 items across the nine Implemented rows, plus one on a Partial row. "248 tests pass" is
+a fact about this repository; that output answers whether a given row in
+[COMPLIANCE.md](./COMPLIANCE.md) is actually true.
+
+`pnpm verify:coverage` is its static half and needs no infrastructure: it fails if a row marked
+Implemented has no registered evidence. CI runs it on every pull request, so the project's
+anti-overclaim rule is enforced by the build rather than by whoever remembers it.
 
 The ports deliberately avoid 5432, 6379, 3000, and 3001. A compliance kit is usually
 evaluated on a laptop that already runs another Postgres, and a port collision on first

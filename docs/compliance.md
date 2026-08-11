@@ -68,7 +68,39 @@ deliberate admission that the mapping is the author's reading rather than a QSA'
 
 ## Verifying the claims yourself
 
-The point of a controls list is that someone can check it. Every "Implemented" row has runnable evidence:
+The point of a controls list is that someone can check it, so there is one command that does:
+
+```bash
+pnpm verify:claims
+```
+
+It runs the real suites and reports every result grouped by the control it supports, with that
+control's HIPAA, PCI-DSS and SOC 2 citation next to it. Currently **51 items across the nine
+Implemented rows**, plus one more on a Partial row: `pnpm audit` under vulnerability management,
+which is included because the part of that row which does exist is runnable, and excluded from the
+Implemented count because the row is not Implemented.
+
+It re-implements nothing: each assertion belongs to `pnpm smoke`, the two audit probes, the
+slowloris probe, the unit suite or `pnpm audit`, and this command runs those and attributes the
+output. A copy of an assertion here would be a second source of truth that could drift from the real
+one while still printing PASS.
+
+It needs what those suites need: Postgres and Redis up, the service running, and
+`CONTROL_PLANE_API_KEY` exported in the shell. Run `pnpm verify:claims --list` to see the registry
+without executing anything.
+
+There is also a static half, which CI runs on every pull request:
+
+```bash
+pnpm verify:coverage
+```
+
+That one reads this repository's `COMPLIANCE.md` and **fails the build if a row marked Implemented
+has no registered evidence**, or if the registry names a row the document no longer contains. It is
+the anti-overclaim rule enforced rather than remembered: marking a row Implemented without wiring up
+the proof is now a red build rather than an oversight nobody catches.
+
+The underlying evidence, per row:
 
 | Row | Verify with |
 | --- | --- |
@@ -83,10 +115,9 @@ The point of a controls list is that someone can check it. Every "Implemented" r
 | Control-plane authorization | `pnpm smoke` step 1 |
 
 See [testing](testing.md) for what each one actually establishes, and for the standard those checks are
-held to: a test that cannot fail is worse than no test.
-
-A single `pnpm verify:claims` command that runs all of this and presents it by control is the next thing
-being built.
+held to: a test that cannot fail is worse than no test. That standard applies to the coverage gate
+too, which is why it was checked by flipping a row to Implemented and confirming the build went red,
+rather than by observing that it passed.
 
 ## If a doc and COMPLIANCE.md disagree
 
