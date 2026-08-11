@@ -13,15 +13,35 @@ updates:
     open-pull-requests-limit: 5
     # Grouped, because a monorepo on separate PRs per package produces a wall of noise that gets
     # ignored, and an ignored dependency PR is worse than none: it trains you to dismiss them.
+    #
+    # The grouping below is deliberately shaped by what went wrong on 2026-08-10, when six separate
+    # PRs were open at once. Every one of them rewrote pnpm-lock.yaml, so they could not be merged
+    # in sequence without rebasing and re-testing each survivor, and the combination none of them
+    # had been tested in was the thing actually being shipped. Six PRs also made enough noise to
+    # hide the real problem: all six were failing one check that none of them had caused.
+    #
+    # ORDER MATTERS. A dependency lands in the FIRST group whose patterns and update-types it
+    # matches, so the two cohesion groups come before the catch-all. Everything after them that is
+    # not a major arrives as one pull request.
     groups:
+      # These two stay separate from the catch-all because their packages must move TOGETHER, at
+      # every semver level: a @nestjs/core that outruns @nestjs/common is a broken build, and
+      # @prisma/client is generated against its own prisma CLI version. No update-types filter, so
+      # majors group too, which is the point.
       nestjs:
         patterns: ["@nestjs/*"]
       prisma:
         patterns: ["prisma", "@prisma/*"]
-      lint-and-test:
-        patterns: ["eslint*", "@eslint/*", "typescript-eslint", "prettier*", "vitest", "@vitest/*"]
-      types:
-        patterns: ["@types/*"]
+      # Everything else, provided it is not a major: one pull request, one lockfile, one CI run,
+      # one review. This is what collapses six PRs into one.
+      #
+      # Majors are excluded on purpose and therefore arrive individually, which is exactly the
+      # handling they deserve. ioredis 6 in that batch changed the default wire protocol to RESP3
+      # and raised the minimum Redis version; grouped in with four dev-tooling patches it would
+      # have been reviewed as a lockfile diff.
+      non-major:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
     ignore:
       # @types/node MUST track the Node major this kit targets, which is the current LTS (24),
       # not npm's "latest" dist-tag. Dependabot proposed 24 -> 26 within an hour of being
