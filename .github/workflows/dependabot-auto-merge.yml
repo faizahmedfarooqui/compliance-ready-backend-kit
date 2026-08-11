@@ -1,0 +1,117 @@
+name: Dependabot auto-merge
+
+# Turns Dependabot's low-risk updates into "merges itself once the gates are green" instead of
+# "waits for someone to sit and watch CI". It does NOT approve anything: see the section on that
+# below, because the thing this workflow deliberately does not do is the interesting part.
+#
+# What it actually does is call GitHub's auto-merge, which queues the pull request to merge when,
+# and only when, every requirement on the branch is satisfied: the six required status checks, and
+# a human approving review. So the effect is that the reviewer stops being a timer. Approve whenever
+# convenient, before CI has even finished if you like, and the merge happens on green without
+# anyone returning to the tab.
+#
+# WHY THERE IS NO AUTO-APPROVE STEP. Making this fully hands-off needs one more thing: the
+# repository setting "Allow GitHub Actions to create and approve pull requests", plus a
+# `gh pr review --approve` here. That was left off on purpose. The setting is not scoped to this
+# workflow, it lets ANY workflow in the repository approve ANY pull request, which retires the
+# one-approving-review rule as a control while leaving it in place as an appearance. For a
+# repository whose whole claim is that its controls are real and named, a bot rubber-stamping its
+# own dependency updates is the wrong trade, and it is precisely the arrangement an assessor would
+# ask about. With grouping in dependabot.yml the manual cost this leaves is roughly one approval a
+# week, which is the review the rule exists to obtain.
+#
+# If you decide otherwise, the honest way is: enable the setting, add the approve step, and scope it
+# no wider than the filter below. Do not widen the filter to compensate.
+
+# pull_request_target, NOT pull_request, and the difference is a real hole rather than a style
+# preference. `pull_request` runs the workflow file as it exists in the PR's own head, so a
+# Dependabot PR that edits this file, which every github-actions update does by definition, would
+# run ITS version of these steps with the write token granted below. A compromised upstream action
+# would then execute against this repository at `contents: write` before any human had looked at
+# the bump. `pull_request_target` takes the workflow definition from the BASE branch instead, so
+# what runs is always the reviewed copy on main, and the proposed new action version does not
+# execute until it has actually been merged. The action's own README uses pull_request_target for
+# this reason, as does GitHub's Dependabot troubleshooting guidance.
+#
+# The usual pull_request_target footgun is the other half of that trade: it runs privileged, in the
+# base context, so checking out and executing PR-authored code hands an attacker the token. THIS
+# WORKFLOW MUST THEREFORE NEVER GAIN A CHECKOUT STEP. It reads metadata and calls the API; it never
+# needs the tree, and there is nothing here that a `uses: actions/checkout` would improve.
+on:
+  pull_request_target:
+
+# Least privilege, and both are needed: `pull-requests: write` to call auto-merge on the PR,
+# `contents: write` because auto-merge performs the merge commit.
+#
+# This block is load-bearing rather than boilerplate. A workflow triggered by a Dependabot pull
+# request receives a READ-ONLY token and none of the repository's Actions secrets, so without an
+# explicit escalation here every run would fail at the API call.
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    name: Enable auto-merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Two independent conditions, both required, neither redundant.
+    #
+    # The AUTHOR, from the event payload, rather than `github.actor`. Under pull_request_target
+    # `github.actor` is whoever most recently triggered the run, so a maintainer pressing "Re-run
+    # jobs" becomes the actor and a correct re-run would silently skip. The PR's author does not
+    # change.
+    #
+    # The HEAD REPOSITORY, because a privileged trigger must never treat a fork as internal. A
+    # branch name cannot be trusted either way: anyone able to push a branch called
+    # dependabot/npm_and_yarn/anything must not inherit this path, which is why neither check looks
+    # at one.
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]'
+      && github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      # Reads what the PR actually updates from Dependabot's own commit metadata rather than by
+      # parsing the title, which is prose and changes.
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      # THE FILTER. Deliberately narrow, and the narrowness is the safety argument, since nothing
+      # downstream re-examines what this lets through.
+      #
+      # - Development dependencies only. A production dependency is in the request path, and this
+      #   repository has already had two updates that compiled clean, passed every test, and still
+      #   changed behaviour: ioredis 6 moved to RESP3 by default, and a fastify bump silently did
+      #   nothing because a pnpm override outranked it. Neither is visible to a green build.
+      # - Patch and minor only. Never a major.
+      # - Never a grouped update. A group can mix a dev patch with something else, and
+      #   `dependency-type` then describes the group rather than each member.
+      #
+      # Everything excluded here still gets a normal review. Excluded is the default, not a penalty.
+      - name: Enable auto-merge for dev-only patch and minor updates
+        if: >-
+          steps.meta.outputs.dependency-type == 'direct:development'
+          && (steps.meta.outputs.update-type == 'version-update:semver-patch'
+              || steps.meta.outputs.update-type == 'version-update:semver-minor')
+          && steps.meta.outputs.dependency-group == ''
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # A workflow that quietly does nothing is indistinguishable from one that is broken, and this
+      # one is meant to be trusted with merges. Say which branch was taken, in the log, every time.
+      - name: Say what was decided
+        run: |
+          echo "dependency-names: ${{ steps.meta.outputs.dependency-names }}"
+          echo "dependency-type:  ${{ steps.meta.outputs.dependency-type }}"
+          echo "update-type:      ${{ steps.meta.outputs.update-type }}"
+          echo "group:            ${{ steps.meta.outputs.dependency-group }}"
+          echo ""
+          echo "Auto-merge is queued only for an ungrouped patch or minor update to a direct"
+          echo "development dependency. Anything else waits for a normal review, which is the"
+          echo "intended outcome rather than a failure."
+          echo ""
+          echo "Either way this still needs one approving review before it can merge: see the"
+          echo "comment at the top of this workflow for why that is not automated."
