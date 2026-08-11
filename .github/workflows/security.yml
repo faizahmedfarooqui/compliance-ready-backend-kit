@@ -1,5 +1,10 @@
 name: Security
 
+# Actions are pinned to full commit SHAs with the version in a trailing comment. The reasoning is in
+# ci.yml and applies with more force here: this workflow is the evidence that the security gates ran,
+# so an action that could be swapped under a moved tag would undermine the one job whose output is
+# meant to be trustworthy.
+
 # Separate from ci.yml on purpose. These checks answer a different question ("is there a known
 # vulnerability or a leaked secret") and run on a schedule as well as per-change, because a
 # dependency that was clean on Monday can have a published advisory by Friday without anyone
@@ -31,9 +36,9 @@ jobs:
       security-events: write
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: github/codeql-action/init@v4
+      - uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
         with:
           languages: javascript-typescript
           # security-and-quality is broader than the default security-extended and includes
@@ -41,7 +46,7 @@ jobs:
           # its controls, the extra findings are the point.
           queries: security-and-quality
 
-      - uses: github/codeql-action/analyze@v4
+      - uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
         with:
           category: "/language:javascript-typescript"
 
@@ -51,9 +56,9 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -79,8 +84,8 @@ jobs:
       pull-requests: write
 
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/dependency-review-action@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: high
           comment-summary-in-pr: on-failure
@@ -91,13 +96,13 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # gitleaks scans history, so a shallow clone would miss a secret committed earlier and
           # later removed, which is exactly the case that still needs rotating.
           fetch-depth: 0
 
-      - uses: gitleaks/gitleaks-action@v3
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Required for repositories owned by an ORGANISATION, not by a user account. This repo is

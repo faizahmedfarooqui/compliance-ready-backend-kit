@@ -51,9 +51,11 @@ as a control you still have to provide some other way.
   and its config store. The `KeyProvider` port exists so that substitution is a new file rather than
   a redesign, but until it is written, do not cite this row against a requirement that calls for a
   secure cryptographic device. Dependency management now has a committed lockfile, Dependabot,
-  CodeQL, gitleaks over full history, dependency review on pull requests, and `pnpm audit` as a
-  build-failing gate; what is still missing is an SBOM and a documented 12-month cryptographic
-  inventory review (PCI 12.3.3). Logging is structured through the
+  CodeQL, gitleaks over full history, dependency review on pull requests, every GitHub Action pinned
+  to a full commit SHA rather than a movable tag, and `pnpm audit` as a build-failing gate; what is
+  still missing is an SBOM and a documented 12-month cryptographic inventory review (PCI 12.3.3).
+  Note also that the branch ruleset does not currently require status checks to pass before merging,
+  so these gates are enforced by convention at the merge button rather than by the platform. Logging is structured through the
   framework logger and carries a trace id on every error, but there is no OpenTelemetry export,
   no trace propagation and no retention policy.
 - **Not implemented** — the row exists because the control is in scope for the kit's roadmap, not
