@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * `pnpm verify:claims` — reproduce the evidence behind every control COMPLIANCE.md marks
- * Implemented, and report it BY CONTROL with its citation.
+ * `pnpm verify:claims`: reproduce the evidence behind every control COMPLIANCE.md marks Implemented,
+ * and report it BY CONTROL with its citation.
  *
  * WHO THIS IS FOR, because it decides the shape of everything below. The audience is someone
  * evaluating the kit who wants to know whether a row in COMPLIANCE.md is true. That is a different
@@ -96,6 +96,19 @@ const SUITES = {
     needs: "the network, to reach the advisory database",
   },
 };
+
+/**
+ * The order suites run in, which is not arbitrary.
+ *
+ * `smoke` MUST come before `immutability`: the probe refuses to run against an empty chain and exits
+ * 1, because row triggers are FOR EACH ROW, so on an empty table an UPDATE matches nothing, succeeds,
+ * and the check would pass against a table with no protection whatsoever. Smoke is what puts events
+ * in the chain for it to fire on.
+ *
+ * Every suite referenced by the registry must appear here or it never runs; validateRegistry() below
+ * enforces that rather than trusting it.
+ */
+const RUN_ORDER = ["smoke", "slowloris", "immutability", "contention", "unit", "audit"];
 
 /**
  * Control -> the evidence that supports it.
@@ -285,6 +298,20 @@ function runCoverageGate(rows) {
     console.log(`  ${mark}  ${row.capability} ${DIM}(${n} evidence item(s))${RESET}`);
   }
 
+  // Print the split rather than only a grand total, because the two numbers mean different things and
+  // conflating them is a small overclaim of exactly the kind this script exists to prevent: evidence
+  // attached to a Partial row is not evidence for an Implemented one. Review caught the docs doing
+  // precisely that, so the authoritative counts are printed here for anyone updating prose.
+  const implementedItems = implemented.reduce(
+    (n, r) => n + (EVIDENCE[r.capability]?.length ?? 0),
+    0,
+  );
+  const allItems = Object.values(EVIDENCE).reduce((n, items) => n + items.length, 0);
+  console.log(
+    `\n  ${implementedItems} evidence item(s) across the ${implemented.length} Implemented rows, ` +
+      `${allItems - implementedItems} on rows with another status, ${allItems} in total.`,
+  );
+
   const extra = Object.keys(EVIDENCE).filter(
     (k) => rows.find((r) => r.capability === k)?.status !== "Implemented",
   );
@@ -326,11 +353,68 @@ function runSuite(id) {
   return { ok, output, lines: output.split("\n") };
 }
 
+/**
+ * Fail before running anything if the registry and the suites disagree.
+ *
+ * Both ways of getting this wrong are silent until they are not. A typo in a suite id, or a suite
+ * added to SUITES and to the registry but forgotten in RUN_ORDER, would otherwise surface as a
+ * TypeError on `suite.exitCodeOnly` or `run.lines` AFTER every suite had already been executed: a
+ * stack trace at the end of a multi-minute run, naming a property instead of the mistake.
+ */
+function validateRegistry(needed) {
+  const unknown = [...needed].filter((id) => !SUITES[id]);
+  const unordered = [...needed].filter((id) => SUITES[id] && !RUN_ORDER.includes(id));
+  if (unknown.length === 0 && unordered.length === 0) return true;
+
+  console.error(`${RED}${BOLD}The evidence registry does not match the suites.${RESET}`);
+  for (const id of unknown) {
+    console.error(`  - "${id}" is referenced as a suite but is not defined in SUITES.`);
+  }
+  for (const id of unordered) {
+    console.error(`  - "${id}" is defined in SUITES but missing from RUN_ORDER, so it never runs.`);
+  }
+  return false;
+}
+
+/** One evidence item against one suite's captured output. Returns "pass", "fail" or "missing". */
+function judge(item, run) {
+  const suite = SUITES[item.suite];
+
+  if (suite.exitCodeOnly) {
+    if (run.ok) {
+      console.log(`  ${GREEN}PASS${RESET}  ${suite.label} ${DIM}(exit 0)${RESET}`);
+      return "pass";
+    }
+    console.log(`  ${RED}FAIL${RESET}  ${suite.label} ${DIM}(non-zero exit)${RESET}`);
+    return "fail";
+  }
+
+  if (run.lines.some((l) => l.includes(suite.passMarker) && l.includes(item.match))) {
+    console.log(`  ${GREEN}PASS${RESET}  ${DIM}${item.suite}:${RESET} ${item.match}`);
+    return "pass";
+  }
+
+  // The text appearing nowhere at all usually means the assertion was renamed rather than that it
+  // failed. Reported separately so a stale registry cannot be mistaken for a broken control, or
+  // the other way round.
+  if (!run.output.includes(item.match)) {
+    console.log(
+      `  ${YELLOW}MISSING${RESET}  ${DIM}${item.suite}:${RESET} ${item.match} ` +
+        `${DIM}(not found in the output; renamed?)${RESET}`,
+    );
+    return "missing";
+  }
+
+  console.log(`  ${RED}FAIL${RESET}  ${DIM}${item.suite}:${RESET} ${item.match}`);
+  return "fail";
+}
+
 function runFull(rows) {
   const needed = new Set();
   for (const items of Object.values(EVIDENCE)) {
     for (const item of items) needed.add(item.suite);
   }
+  if (!validateRegistry(needed)) return 1;
 
   console.log(`${BOLD}Reproducing the evidence behind COMPLIANCE.md${RESET}\n`);
   console.log(`${DIM}Each suite runs once; results are attributed to the controls they support.`);
@@ -339,15 +423,11 @@ function runFull(rows) {
   );
 
   const results = {};
-  // Deterministic order, and smoke first on purpose: it provisions the tenants and writes the audit
-  // events that the immutability probe refuses to run without.
-  for (const id of ["smoke", "slowloris", "immutability", "contention", "unit", "audit"]) {
+  for (const id of RUN_ORDER) {
     if (needed.has(id)) results[id] = runSuite(id);
   }
 
-  let failed = 0;
-  let missing = 0;
-  let passed = 0;
+  const tally = { pass: 0, fail: 0, missing: 0 };
 
   for (const row of rows) {
     const items = EVIDENCE[row.capability];
@@ -356,44 +436,10 @@ function runFull(rows) {
     console.log(`\n${BOLD}${row.capability}${RESET}  ${DIM}[${row.status}]${RESET}`);
     console.log(`  ${DIM}HIPAA ${row.hipaa} | PCI-DSS ${row.pci} | SOC 2 ${row.soc2}${RESET}`);
 
-    for (const item of items) {
-      const suite = SUITES[item.suite];
-      const run = results[item.suite];
-
-      if (suite.exitCodeOnly) {
-        if (run.ok) {
-          console.log(`  ${GREEN}PASS${RESET}  ${suite.label} ${DIM}(exit 0)${RESET}`);
-          passed += 1;
-        } else {
-          console.log(`  ${RED}FAIL${RESET}  ${suite.label} ${DIM}(non-zero exit)${RESET}`);
-          failed += 1;
-        }
-        continue;
-      }
-
-      const hit = run.lines.some((l) => l.includes(suite.passMarker) && l.includes(item.match));
-      if (hit) {
-        console.log(`  ${GREEN}PASS${RESET}  ${DIM}${item.suite}:${RESET} ${item.match}`);
-        passed += 1;
-      } else {
-        const alsoAbsent = !run.output.includes(item.match);
-        if (alsoAbsent) {
-          // The assertion text is nowhere in the output at all, which usually means it was renamed
-          // rather than that it failed. Called out separately so a stale registry cannot be mistaken
-          // for a broken control, and vice versa.
-          console.log(
-            `  ${YELLOW}MISSING${RESET}  ${DIM}${item.suite}:${RESET} ${item.match} ` +
-              `${DIM}(not found in the output; renamed?)${RESET}`,
-          );
-          missing += 1;
-        } else {
-          console.log(`  ${RED}FAIL${RESET}  ${DIM}${item.suite}:${RESET} ${item.match}`);
-          failed += 1;
-        }
-      }
-    }
+    for (const item of items) tally[judge(item, results[item.suite])] += 1;
   }
 
+  const { pass: passed, fail: failed, missing } = tally;
   console.log(`\n${BOLD}Summary${RESET}`);
   console.log(`  ${passed} passed, ${failed} failed, ${missing} missing`);
 

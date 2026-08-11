@@ -134,10 +134,11 @@ file. Without the export, provisioning returns 401 and about a dozen checks fail
 like a broken install.
 
 `pnpm verify:claims` is the one to run if you are evaluating rather than developing. It executes the
-smoke suite, both audit probes, the slowloris probe and the unit tests, then reports all 52 items of
-evidence grouped by the control each supports, with that control's HIPAA, PCI-DSS and SOC 2 citation
-alongside. "248 tests pass" is a fact about this repository; that output answers whether a given row
-in [COMPLIANCE.md](./COMPLIANCE.md) is actually true.
+smoke suite, both audit probes, the slowloris probe, the unit tests and `pnpm audit`, then reports
+each result grouped by the control it supports, with that control's HIPAA, PCI-DSS and SOC 2 citation
+alongside: 51 items across the nine Implemented rows, plus one on a Partial row. "248 tests pass" is
+a fact about this repository; that output answers whether a given row in
+[COMPLIANCE.md](./COMPLIANCE.md) is actually true.
 
 `pnpm verify:coverage` is its static half and needs no infrastructure: it fails if a row marked
 Implemented has no registered evidence. CI runs it on every pull request, so the project's

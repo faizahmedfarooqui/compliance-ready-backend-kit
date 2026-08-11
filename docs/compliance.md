@@ -75,9 +75,13 @@ pnpm verify:claims
 ```
 
 It runs the real suites and reports every result grouped by the control it supports, with that
-control's HIPAA, PCI-DSS and SOC 2 citation next to it. Currently 52 pieces of evidence across the
-nine Implemented rows. It re-implements nothing: each assertion belongs to `pnpm smoke`, the two
-audit probes, the slowloris probe or the unit suite, and this command runs those and attributes the
+control's HIPAA, PCI-DSS and SOC 2 citation next to it. Currently **51 items across the nine
+Implemented rows**, plus one more on a Partial row: `pnpm audit` under vulnerability management,
+which is included because the part of that row which does exist is runnable, and excluded from the
+Implemented count because the row is not Implemented.
+
+It re-implements nothing: each assertion belongs to `pnpm smoke`, the two audit probes, the
+slowloris probe, the unit suite or `pnpm audit`, and this command runs those and attributes the
 output. A copy of an assertion here would be a second source of truth that could drift from the real
 one while still printing PASS.
 
