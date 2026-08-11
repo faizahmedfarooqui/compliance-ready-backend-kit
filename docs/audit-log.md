@@ -117,9 +117,23 @@ succeeds.
    `TRUNCATE audit_events` as a one-statement way to erase the entire log, which is exactly the operation
    someone covering their tracks reaches for.
 3. **`REVOKE UPDATE, DELETE, TRUNCATE ... FROM PUBLIC`.** The layer that keeps working if a trigger is
-   ever dropped. It only bites for a role that is neither the table owner nor a superuser, so **in the
-   default single-role setup it is documentation of intent**. In a deployment that runs the service as a
-   restricted role it becomes the real boundary.
+   ever dropped, which is the one case the triggers cannot defend against. It only bites for a role that
+   is neither the table owner nor a superuser, so **in the default single-role setup it is documentation
+   of intent**.
+
+   Making it real is one file: `packages/db/sql/restricted-role.sql`, applied per database, with the service
+   connecting as `crbk_app`. Then `UPDATE`, `DELETE` and `TRUNCATE` on `audit_events` fail with SQLSTATE
+   42501 (`insufficient_privilege`) **before the trigger is consulted**, while `SELECT` and `INSERT`
+   still work. Checked, not assumed. An attacker then has two independent mechanisms to defeat rather
+   than one.
+
+   Two things to know before reaching for it. The restricted role **cannot provision tenants**, because
+   `CREATE DATABASE` needs `CREATEDB`, and whichever role creates a tenant's tables owns them, so
+   granting `CREATEDB` to get provisioning back returns tenant databases to owner-equals-application.
+   The master chain keeps the benefit either way. And the script **refuses to run** if `crbk_app` owns
+   `audit_events` or is a superuser, because in both cases every grant would succeed while enforcing
+   nothing, and a clean run would be the only evidence you got. See
+   [deployment](deployment.md#the-restricted-role) for the procedure and the trade-off table.
 
 Plus CHECK constraints that make the chain's construction rules self-enforcing: both hashes exactly 32
 bytes, metadata flat strings, a non-empty action, and the actor pairing described below.

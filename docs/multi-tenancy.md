@@ -68,7 +68,7 @@ surgically extracting rows from a shared backup.
 2. Insert the registry row with status `provisioning`.
 3. `CREATE DATABASE`.
 4. Inside one transaction against the new database: apply the generated tenant DDL, apply
-   `sql/audit-immutability.sql`, seed the permission catalogue and the `tenant-admin` role.
+   `packages/db/sql/audit-immutability.sql`, seed the permission catalogue and the `tenant-admin` role.
 5. Mark the registry row `active`.
 6. Append a `tenant.provisioned` event to the **master** chain.
 
