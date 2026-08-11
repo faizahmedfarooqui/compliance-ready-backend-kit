@@ -131,9 +131,24 @@ collapses both to 5.11.0 and picks up 5.11.0's fix for honouring quoted strings 
 parameter values, a parameter this service reads on every request and the same class of parsing bug
 behind four Fastify advisories. Verified the way the `find-my-way` override was, by resolution:
 `pnpm why fastify -r` reports 5.11.0 for both `services/auth` and `@nestjs/platform-fastify`, and one
-`fastify@5.11.0` remains in the lockfile. The cost, stated plainly, is that the adapter now runs
-against a Fastify minor its own maintainers did not pin, which is why the end-to-end smoke test
+one `fastify` version remains in the lockfile. The cost, said plainly, is that the adapter now runs
+against a Fastify version its own maintainers did not pin, which is why the end-to-end smoke test
 matters more than usual here.
+
+**The override is now the single source of truth for the Fastify version, and that has a sharp
+edge.** It was found one day later, on the very next Dependabot run. An override range is not a
+floor that drifts upward: `^5.11.0` is satisfied by 5.11.0, so when Dependabot bumped
+`services/auth` to `^5.11.3`, `pnpm install` left the lockfile on 5.11.0 and the "upgrade" changed
+nothing at all. A bump that appears to land and does nothing is worse than one that fails, so when
+raising Fastify, **change the override too, and confirm by resolution**:
+
+```bash
+pnpm why fastify -r | grep -A1 platform-fastify   # must report the version you intended
+grep -E '^  fastify@[0-9]' pnpm-lock.yaml         # must be exactly one line
+```
+
+The same applies to every entry in `pnpm.overrides`: each one takes that dependency's version out of
+the hands of the package that declares it, including out of Dependabot's.
 
 ## What this project is not
 
