@@ -43,9 +43,9 @@ Not-implemented row to Implemented fails, and renaming a row reports both halves
 
 The immutability probe runs there against **both** chains, the master and one of the tenants the smoke
 suite provisions. Both, because the enforcement reaches them by different routes and either can regress
-alone: the master gets `sql/audit-immutability.sql` inlined into its migration, while a tenant database
-gets it applied inside the provisioning transaction. A tenant whose provisioning skipped it would leave
-the master passing and every customer's log unprotected.
+alone: the master gets `packages/db/sql/audit-immutability.sql` inlined into its migration, while a
+tenant database gets it applied inside the provisioning transaction. A tenant whose provisioning skipped
+it would leave the master passing and every customer's log unprotected.
 
 ## The rule these suites are built around
 

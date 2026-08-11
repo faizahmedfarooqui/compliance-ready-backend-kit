@@ -121,7 +121,7 @@ succeeds.
    is neither the table owner nor a superuser, so **in the default single-role setup it is documentation
    of intent**.
 
-   Making it real is one file: `sql/restricted-role.sql`, applied per database, with the service
+   Making it real is one file: `packages/db/sql/restricted-role.sql`, applied per database, with the service
    connecting as `crbk_app`. Then `UPDATE`, `DELETE` and `TRUNCATE` on `audit_events` fail with SQLSTATE
    42501 (`insufficient_privilege`) **before the trigger is consulted**, while `SELECT` and `INSERT`
    still work. Checked, not assumed. An attacker then has two independent mechanisms to defeat rather

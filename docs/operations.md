@@ -205,9 +205,9 @@ and until it lands, the notes below are what you need to know.
 - **`GET /api/health` is liveness only** and never touches the database. A readiness probe that checks
   dependencies does not exist yet, so do not point one at this route and assume it covers Postgres.
 - **Run the service as a restricted Postgres role if you can**, and there is now a file for it:
-  `sql/restricted-role.sql`. `sql/audit-immutability.sql` already `REVOKE`s UPDATE, DELETE and TRUNCATE,
-  but that layer only bites for a role that is neither the table owner nor a superuser, so in the default
-  single-role setup it is documentation of intent. Applied, and with the service connecting as
+  `packages/db/sql/restricted-role.sql`. The immutability SQL already `REVOKE`s UPDATE, DELETE and
+  TRUNCATE, but that layer only bites for a role that is neither the table owner nor a superuser, so in
+  the default single-role setup it is documentation of intent. Applied, and with the service connecting as
   `crbk_app`, those three statements fail with SQLSTATE 42501 before the trigger is consulted, which was
   verified rather than assumed. Two caveats worth reading first: the role cannot provision tenants,
   because `CREATE DATABASE` needs `CREATEDB`, and the script refuses to run if `crbk_app` owns
