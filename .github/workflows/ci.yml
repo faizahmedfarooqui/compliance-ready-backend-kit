@@ -80,6 +80,18 @@ jobs:
       - name: Unit tests with coverage
         run: pnpm test:coverage
 
+      # The anti-overclaim rule, enforced instead of remembered. Fails if COMPLIANCE.md marks a
+      # control Implemented while no evidence is registered for it in scripts/verify-claims.mjs, and
+      # also fails if the registry names a control the document no longer has, which is what a rename
+      # looks like. It lives in THIS job rather than the one below because it reads the markdown and
+      # runs nothing, so it needs no Postgres, no Redis and no server, and it fails in seconds.
+      #
+      # `pnpm verify:claims` without the flag is the other half: it reproduces the evidence for real.
+      # That is deliberately NOT run here, because it would be a second full execution of the smoke
+      # suite and both probes, which the job below already runs once each.
+      - name: Evidence coverage for every Implemented control
+        run: pnpm verify:coverage
+
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

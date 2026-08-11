@@ -37,6 +37,8 @@
     "infra:down": "docker compose down",
     "infra:reset": "docker compose down -v && docker compose up -d",
     "smoke": "./scripts/smoke-test.sh",
+    "verify:claims": "node scripts/verify-claims.mjs",
+    "verify:coverage": "node scripts/verify-claims.mjs --coverage",
     "smoke:slowloris": "node scripts/slowloris-probe.mjs",
     "audit:contention": "node packages/db/dist/audit/contention-probe.js",
     "audit:verify": "node packages/db/dist/audit/verify-chain.js",
