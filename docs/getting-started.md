@@ -9,6 +9,10 @@ From a fresh clone to an authenticated request, with the steps that are easy to 
 - **pnpm 9.** The repository is a pnpm workspace; npm and yarn will not resolve the
   `@compliance-kit/*` links.
 - **Docker.** For local Postgres and Redis. Nothing else uses it.
+- **Redis 6 or newer, if you supply your own.** `pnpm infra:up` runs Redis 7, so this only applies
+  when you point `REDIS_URL` at your own server. The client negotiates RESP3, which needs a server
+  that answers `HELLO`. Against Redis 5 or older, including ElastiCache still on 5, every command
+  fails at the handshake; pass `protocol: 2` in `RateLimitModule` to stay on the older wire protocol.
 
 ## Install and run
 
