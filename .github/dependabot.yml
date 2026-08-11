@@ -39,6 +39,13 @@ updates:
     # Security patches should not wait for the weekly window, and Dependabot raises those
     # separately from version updates regardless of this schedule.
 
+  # Both workflows pin every action to a full commit SHA rather than a tag; the reasoning is at the
+  # top of ci.yml. Dependabot understands SHA pins and maintains them, updating the SHA and rewriting
+  # the trailing version comment, so pinning does not mean upgrading by hand.
+  #
+  # Review these like any other dependency PR. A SHA bump is unreadable on its own, so the check is
+  # that the new SHA really is the tag the comment claims, which is one API call:
+  #   gh api repos/<owner>/<repo>/commits/<version> --jq .sha
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

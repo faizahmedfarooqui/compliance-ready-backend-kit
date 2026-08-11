@@ -1,5 +1,17 @@
 name: CI
 
+# Every `uses:` is pinned to a full commit SHA, with the human-readable version in a trailing
+# comment. A tag is a mutable pointer: whoever can publish an action can move `v7` to different code,
+# and that code runs here with whatever this workflow's token can reach. A SHA is the only reference
+# that cannot be repointed, which is why GitHub's own hardening guide asks for it. This is a supply
+# chain control, and PCI-DSS Req 6.3.x and SOC 2 CC8.1 both care about it.
+#
+# Dependabot keeps these current: it updates the SHA and rewrites the version comment, so the pin is
+# not a promise to upgrade by hand. Read the comment to know what you are on, and never edit a SHA
+# without changing the comment to match, because the comment is the only readable half.
+#
+# The rejected middle option was an exact patch TAG (`@v7.0.1`), which is what Dependabot proposes by
+# default. It reads like a pin and immunises nothing, since it is still a tag.
 on:
   push:
     branches: [main]
@@ -40,9 +52,9 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -70,7 +82,7 @@ jobs:
 
       - name: Upload coverage
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage
           path: coverage/
@@ -109,13 +121,13 @@ jobs:
           --health-retries 10
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
       # .nvmrc is the single source of truth for the Node version, so CI and a developer's
       # `nvm use` cannot drift. It tracks the current Node LTS line.
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: pnpm
