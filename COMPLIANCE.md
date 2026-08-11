@@ -54,8 +54,11 @@ as a control you still have to provide some other way.
   CodeQL, gitleaks over full history, dependency review on pull requests, every GitHub Action pinned
   to a full commit SHA rather than a movable tag, and `pnpm audit` as a build-failing gate; what is
   still missing is an SBOM and a documented 12-month cryptographic inventory review (PCI 12.3.3).
-  Note also that the branch ruleset does not currently require status checks to pass before merging,
-  so these gates are enforced by convention at the merge button rather than by the platform. Logging is structured through the
+  The ones that run in CI are enforced by the platform rather than by habit: the branch ruleset
+  requires the CI and security status checks to pass before `main` can be updated, so a red audit or
+  CodeQL run blocks the merge instead of relying on whoever is holding the button. Repository
+  administrators can still bypass the ruleset, which is the honest limit on that claim. Logging is
+  structured through the
   framework logger and carries a trace id on every error, but there is no OpenTelemetry export,
   no trace propagation and no retention policy.
 - **Not implemented** — the row exists because the control is in scope for the kit's roadmap, not
