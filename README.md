@@ -27,10 +27,11 @@ reference, operations runbooks, and how every claim above is verified.
 > assessment (a QSA or SAQ for PCI, a licensed CPA firm for a SOC 2 report). Deploying
 > this repository satisfies none of those on its own.
 >
-> It is also **early**. The published package is still `0.1.0`; the v0.2 milestone below is
-> complete in the code but nothing has been released under that number. It is unaudited by anyone
-> but its author and carries the known gaps listed under [Status](#status). Read that section
-> before putting it near real data.
+> It is also **early**. `v0.2.0` is the first tagged release, and it is `0.2.0` rather than `0.1.0`
+> because v0.1 was a milestone that was never tagged. The kit is pre-1.0, so a minor version may
+> change behaviour; [CHANGELOG.md](./CHANGELOG.md) says where. It is unaudited by anyone but its
+> author and carries the known gaps listed under [Status](#status). Read that section before putting
+> it near real data.
 
 ## Why database-per-tenant
 
