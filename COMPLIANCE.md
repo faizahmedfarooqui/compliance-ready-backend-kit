@@ -21,6 +21,13 @@ deliberately outside this repository. An earlier version of this file listed thi
 status column, which read as a claim to all of them. Treat any row that does not say "Implemented"
 as a control you still have to provide some other way.
 
+**Do not take the Status column on trust either.** `pnpm verify:claims` runs the real test suites and
+reports the results grouped under the row each one supports, with the citations below repeated beside
+them, so every Implemented row can be checked rather than believed. `pnpm verify:coverage` is the same
+registry as a build gate: it **fails CI** if a row here is marked Implemented while no evidence is
+registered for it, which is how this file is kept from drifting ahead of the code. See
+[docs/compliance.md](docs/compliance.md#verifying-the-claims-yourself).
+
 | Capability | Status | HIPAA (45 CFR) | PCI-DSS v4.0.1 | SOC 2 (TSC) |
 | --- | --- | --- | --- | --- |
 | Multi-tenant isolation (database-per-tenant) | **Implemented** | 164.312(a)(1) | Req 7 | CC6.1 |
@@ -75,12 +82,22 @@ as a control you still have to provide some other way.
   serialised anyway, since Postgres advisory locks are per-database.
 
   **The precise claim, because "immutable" would be an overclaim.** What is true is: *append-only as
-  enforced against the application role, and tamper-evident beyond that.* Three enforcement layers, all
-  verified by attempting to violate them rather than by inspection: row triggers refusing UPDATE and
-  DELETE, a statement trigger refusing TRUNCATE (row triggers do not fire for TRUNCATE at all, which
-  would otherwise leave one statement able to erase the log), and REVOKE of those privileges. Four CHECK
-  constraints pin the hash widths, the metadata shape, a non-empty action, and the actor pairing.
-  `UNIQUE(prev_hash)` makes a forked chain impossible rather than unlikely.
+  enforced against the application role, and tamper-evident beyond that.* Three enforcement layers: row
+  triggers refusing UPDATE and DELETE, a statement trigger refusing TRUNCATE (row triggers do not fire
+  for TRUNCATE at all, which would otherwise leave one statement able to erase the log), and REVOKE of
+  those privileges. Four CHECK constraints pin the hash widths, the metadata shape, a non-empty action,
+  and the actor pairing. `UNIQUE(prev_hash)` makes a forked chain impossible rather than unlikely.
+
+  **How much of that is verified, stated exactly, because the three layers are not equal.** The two
+  trigger layers are verified by attempting to violate them, not by inspection: `pnpm audit:immutability`
+  issues a real UPDATE, DELETE and TRUNCATE against both chains and asserts each is refused. The REVOKE
+  layer is different and was long the weaker claim: it only binds a role that is neither the table owner
+  nor a superuser, so in the default single-role setup, where the service connects as the owner, it is
+  documentation of intent and the probe's own check for it says so. Applying
+  `packages/db/sql/restricted-role.sql` and connecting as that restricted role makes it a real boundary,
+  verified: UPDATE, DELETE and TRUNCATE then fail with SQLSTATE 42501 before the trigger is consulted.
+  The cost is that the restricted role cannot provision tenants, since `CREATE DATABASE` needs
+  `CREATEDB`. See [docs/deployment.md](docs/deployment.md#the-restricted-role) for the trade-off.
 
   **What it does NOT do.** A superuser can drop or disable a trigger, or set
   `session_replication_role`. So this is enforcement against the application, against an ordinary

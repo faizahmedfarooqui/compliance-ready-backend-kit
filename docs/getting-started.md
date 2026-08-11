@@ -174,3 +174,7 @@ server. `pnpm restart:auth` fixes it.
 - [Configuration](configuration.md) for what every environment variable does.
 - [Request lifecycle](request-lifecycle.md) to see what happens between the socket and your handler.
 - [API reference](api-reference.md) for every route and its guards.
+- [Deployment](deployment.md) when you want it in a container rather than on your laptop, including the
+  restricted database role that turns the audit log's third enforcement layer into a real boundary.
+- [Compliance mapping](compliance.md#verifying-the-claims-yourself) if you are evaluating rather than
+  building: `pnpm verify:claims` reproduces the evidence for every control the mapping claims.

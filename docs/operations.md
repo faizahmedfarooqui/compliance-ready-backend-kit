@@ -62,8 +62,23 @@ Every command, and the runbooks for the things you will actually need to do.
 | --- | --- |
 | `pnpm test` | 248 unit tests, no database needed |
 | `pnpm test:coverage` | With coverage thresholds |
+| `pnpm test:watch` | The same suite, on file changes |
 | `pnpm smoke` | 92 end-to-end checks against a running service |
 | `pnpm smoke:slowloris` | Raw-socket check that the request timeout is real |
+| `pnpm verify:claims` | Every suite above, reported per compliance control with its citation |
+| `pnpm verify:coverage` | Static: fails if a row marked Implemented has no registered evidence |
+| `pnpm verify:claims --list` | The evidence registry, without running anything |
+
+`pnpm verify:claims` is the one to hand an evaluator: it runs the real suites and groups the results by
+the control each supports rather than by test mechanism. `pnpm verify:coverage` needs no database and
+runs in CI on every pull request. See [compliance mapping](compliance.md#verifying-the-claims-yourself).
+
+### Formatting and linting
+
+| Command | Does |
+| --- | --- |
+| `pnpm lint:fix` | ESLint with `--fix` |
+| `pnpm format:check` | Prettier in check mode, which is what CI runs |
 
 ## Runbooks
 
@@ -189,7 +204,12 @@ and until it lands, the notes below are what you need to know.
 - **`enableShutdownHooks` is on**, so `SIGTERM` closes database pools rather than dropping them.
 - **`GET /api/health` is liveness only** and never touches the database. A readiness probe that checks
   dependencies does not exist yet, so do not point one at this route and assume it covers Postgres.
-- **Run the service as a restricted Postgres role if you can.** `sql/audit-immutability.sql` already
-  `REVOKE`s UPDATE, DELETE and TRUNCATE, but that layer only bites for a role that is neither the table
-  owner nor a superuser. In the default single-role setup it is documentation of intent; under a restricted
-  role it becomes a real boundary. This is the single change that most strengthens the audit-log claim.
+- **Run the service as a restricted Postgres role if you can**, and there is now a file for it:
+  `sql/restricted-role.sql`. `sql/audit-immutability.sql` already `REVOKE`s UPDATE, DELETE and TRUNCATE,
+  but that layer only bites for a role that is neither the table owner nor a superuser, so in the default
+  single-role setup it is documentation of intent. Applied, and with the service connecting as
+  `crbk_app`, those three statements fail with SQLSTATE 42501 before the trigger is consulted, which was
+  verified rather than assumed. Two caveats worth reading first: the role cannot provision tenants,
+  because `CREATE DATABASE` needs `CREATEDB`, and the script refuses to run if `crbk_app` owns
+  `audit_events`, since an owner keeps those privileges whatever is revoked. Full procedure and the
+  trade-off table are in [deployment](deployment.md#the-restricted-role).

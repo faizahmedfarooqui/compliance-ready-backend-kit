@@ -11,11 +11,35 @@ What is proven, how, and the deliberate decision not to unit test the database l
 | `pnpm smoke:slowloris` | raw-socket request-timeout probe | a running service |
 | `pnpm audit:contention` | concurrent-append fork probe | Postgres |
 | `pnpm audit:immutability --master \| --tenant <slug\|uuid>` | append-only enforcement probe | Postgres |
+| `pnpm audit:verify --master \| --tenant <slug\|uuid>` | walks a chain and reports the first break | Postgres |
+| `pnpm verify:claims` | all of the above, reported per compliance control | everything |
+| `pnpm verify:coverage` | static evidence-coverage gate | nothing |
 
 CI runs every one of them on every commit, in two jobs: one that needs no database (lint, format, unit
-tests with coverage) and one that runs against real Postgres and Redis service containers. The
-database-backed job additionally exercises key rotation and revocation, which is not unit tested for the
-reasons below.
+tests with coverage, the coverage gate) and one that runs against real Postgres and Redis service
+containers. The database-backed job additionally exercises key rotation and revocation, which is not unit
+tested for the reasons below.
+
+## Reading the results by control instead of by suite
+
+The table above is organised by mechanism, which is the wrong axis for the question most readers of this
+repository actually have. "248 tests pass" is a fact about the project's diligence; it is not an answer to
+"is multi-tenant isolation real". `pnpm verify:claims` runs the same suites and reports every result
+grouped under the control it supports, with that control's HIPAA, PCI-DSS and SOC 2 citation beside it:
+51 items across the nine rows COMPLIANCE.md marks Implemented, plus one on a Partial row.
+
+It re-implements nothing. Each entry in its registry is a substring matched against a **passing line** of
+a suite's real output, so the assertions stay where they were written. A copy of an assertion inside that
+script would be a second source of truth able to keep printing PASS after the original had changed, which
+is the one failure a compliance document cannot survive. A match that resolves nowhere is reported as
+MISSING rather than FAIL, because "the evidence was renamed" and "the control broke" are different
+problems and one exit code for both would hide each behind the other.
+
+`pnpm verify:coverage` is the half CI can run on every pull request, since it reads markdown and executes
+nothing: it **fails the build** if a row marked Implemented has no registered evidence, or if the registry
+names a row COMPLIANCE.md no longer contains. That makes the project's anti-overclaim rule enforced rather
+than remembered. Per the rule in the next section, it was checked by breaking it: flipping a
+Not-implemented row to Implemented fails, and renaming a row reports both halves of the problem at once.
 
 The immutability probe runs there against **both** chains, the master and one of the tenants the smoke
 suite provisions. Both, because the enforcement reaches them by different routes and either can regress
