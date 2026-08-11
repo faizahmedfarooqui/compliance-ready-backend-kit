@@ -38,6 +38,7 @@ quick start. These pages go deeper and are organised by the task you are trying 
 | [API reference](api-reference.md) | Every route, its guards, and worked request and response examples |
 | [Response contract](responses.md) | The success envelope and the RFC 9457 error shape |
 | [Error catalogue](../problems.md) | Every problem code, with the status it maps to |
+| [Deployment](deployment.md) | The container image, migrations, and running as a restricted database role |
 | [Operations](operations.md) | Every CLI command, and the runbooks for rotation and verification |
 | [Testing](testing.md) | What is unit tested, what is only provable against a real database, and why |
 | [Compliance mapping](compliance.md) | How to read [COMPLIANCE.md](../COMPLIANCE.md), and what the kit does not claim |

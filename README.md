@@ -493,9 +493,15 @@ a request, until its database is fully built.
 
 ## Status
 
-v0.2 is **auth + RBAC + a key registry + rate limiting + an authenticated control plane**, on the
-database-per-tenant foundation. It builds, typechecks, passes 192 unit tests and an 88-check
-end-to-end smoke test against a live Postgres and Redis, run in CI on every push.
+v0.2 is **auth + RBAC + a key registry + rate limiting + an authenticated control plane + an
+append-only audit log**, on the database-per-tenant foundation. It builds, typechecks, passes 248 unit
+tests and a 92-check end-to-end smoke test against a live Postgres and Redis, run in CI on every push.
+`pnpm verify:claims` reproduces the evidence behind every control the mapping marks Implemented, and
+CI fails if one of those rows has no evidence registered.
+
+It also **ships as a container image** now, with a documented deployment path including the restricted
+database role that makes the audit log's REVOKE layer a real boundary rather than documentation of
+intent. See [docs/deployment.md](docs/deployment.md).
 
 Known gaps, stated plainly because a compliance kit that hides its gaps is worse than no kit:
 
