@@ -1,0 +1,42 @@
+# Keep the build context small and, more importantly, keep secrets and host-built artefacts out of it.
+#
+# `.env` is the line that matters most. Without it, a `COPY . .` in any future edit to the Dockerfile
+# would bake real credentials into an image layer, where they survive deletion from the filesystem and
+# travel with every `docker push`. The Dockerfile does not copy it today; this makes that safe rather
+# than merely true.
+.env
+.env.*
+!.env.example
+
+# Host-built output. These MUST be excluded rather than reused: dist/ and the generated Prisma clients
+# are compiled on the developer's machine, and node_modules holds native modules (argon2) built for the
+# host's platform and libc. Copying an arm64 macOS argon2 into a linux/amd64 image produces a binary
+# that fails to load at require time, which is a confusing way to learn this lesson.
+node_modules
+**/node_modules
+dist
+**/dist
+**/src/generated
+coverage
+
+# Not needed at build or run time.
+.git
+.github
+.claude
+docs
+*.md
+!README.md
+plan.md
+problems.md
+scripts/smoke-test.sh
+scripts/slowloris-probe.mjs
+scripts/verify-claims.mjs
+docker-compose.yml
+Dockerfile
+.dockerignore
+.nvmrc
+.prettierrc
+.prettierignore
+eslint.config.mjs
+vitest.config.ts
+**/*.spec.ts
