@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "argon2": "^0.45.1",
-    "jose": "^6.2.8"
+    "jose": "^6.2.9"
   },
   "devDependencies": {
     "@types/node": "^24.13.3"
