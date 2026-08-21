@@ -71,3 +71,25 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 3
+    # GROUPING HERE IS NOT NOISE REDUCTION, IT IS CORRECTNESS. Dependabot treats
+    # `github/codeql-action/init` and `github/codeql-action/analyze` as two independent
+    # dependencies, because they are two paths. They are one action, and CodeQL refuses to run
+    # when the two halves disagree:
+    #
+    #   Loaded a configuration file for version '4.37.7', but running version '4.37.6'
+    #
+    # So a split pair produces two pull requests that are each individually RED and can only go
+    # green together, which is a state no amount of rebasing escapes. That happened on #32 and
+    # #34. Grouped at EVERY semver level rather than only for non-majors, because a major would
+    # split exactly the same way.
+    #
+    # Ordering matters: a dependency lands in the first group whose patterns it matches, so the
+    # cohesion group precedes the catch-all.
+    groups:
+      codeql-action:
+        patterns: ["github/codeql-action*"]
+      # Everything else, provided it is not a major. Action majors arrive alone, because an
+      # action major can change its inputs and deserves to be read on its own.
+      actions:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
