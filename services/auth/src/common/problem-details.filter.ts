@@ -160,7 +160,7 @@ export class ProblemDetailsFilter implements ExceptionFilter {
  * something stable and a human reading `title` gets a sentence rather than "HTTP 400".
  * Anything not listed falls back to `HTTP_<status>`, which is a signal to add it here.
  */
-const CODE_BY_STATUS: Readonly<Record<number, string>> = {
+export const CODE_BY_STATUS: Readonly<Record<number, string>> = {
   [HttpStatus.BAD_REQUEST]: "MALFORMED_REQUEST",
   // RBAC denials arrive here as Nest ForbiddenExceptions, so without this entry the most common
   // authorization failure in the kit served `code: "HTTP_403"` and a type URI pointing at
