@@ -180,6 +180,30 @@ mentions has a section here, which is what surfaced it.
 
 No route matches that method and path.
 
+### `method-not-allowed`
+
+`METHOD_NOT_ALLOWED` · **405**
+
+The path exists but does not accept that method.
+
+### `not-acceptable`
+
+`NOT_ACCEPTABLE` · **406**
+
+No representation available that satisfies the request's `Accept` header.
+
+### `payload-too-large`
+
+`PAYLOAD_TOO_LARGE` · **413**
+
+The request body exceeds the configured limit.
+
+### `unsupported-media-type`
+
+`UNSUPPORTED_MEDIA_TYPE` · **415**
+
+The request's `Content-Type` is not one this endpoint accepts.
+
 ### `control-plane-unauthorized`
 
 `CONTROL_PLANE_UNAUTHORIZED` · **401**
@@ -254,5 +278,7 @@ Quote the `traceId` when reporting it.
 2. Map the code to a status in `STATUS_BY_ERROR` in
    `services/auth/src/common/problem-details.filter.ts`.
 3. Add a section here whose anchor is the code in kebab-case, because the `type` URI is derived
-   from the code and will otherwise link to a heading that does not exist.
+   from the code and will otherwise link to a heading that does not exist. **This is enforced**:
+   `problem-details.filter.spec.ts` reads this file and fails if any code the filter can emit has
+   no matching heading, so skipping this step breaks the build rather than shipping a dead link.
 4. Add a smoke-test assertion for it.

@@ -129,9 +129,16 @@ Interpolating request data into `title` breaks the RFC's contract and makes the 
 **you should change it if you fork the kit**, or your API will cite this repository's documentation for
 its own errors.
 
-A smoke assertion fails if the anchor a `type` URI points at does not exist in
-[problems.md](../problems.md), so the RFC's promise that the URI yields documentation stays true rather
-than aspirational.
+A unit assertion in `problem-details.filter.spec.ts` **reads problems.md** and fails if any code the
+filter can emit has no matching heading, so the RFC's promise that the URI yields documentation stays
+true rather than aspirational.
+
+This previously overstated what was checked, and the gap was real. The suite only asserted that a
+derived `type` matched a regex, which proves the string was built correctly and nothing about whether
+the target exists. Four emittable codes (`method-not-allowed`, `not-acceptable`, `payload-too-large`,
+`unsupported-media-type`) pointed at headings that had never been written, and the check that would
+have caught them was the check being described. **A test that asserts a derived string is not a test
+that the target exists.**
 
 ## Status codes
 

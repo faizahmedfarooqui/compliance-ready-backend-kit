@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BadRequestException, HttpStatus, NotFoundException } from "@nestjs/common";
+import { BadRequestException, HttpException, HttpStatus, NotFoundException } from "@nestjs/common";
 import type { ArgumentsHost } from "@nestjs/common";
 import type { AppConfig } from "@compliance-kit/config";
 import {
@@ -14,7 +14,9 @@ import {
   ValidationFailedError,
   type ProblemDetails,
 } from "@compliance-kit/common";
-import { ProblemDetailsFilter } from "./problem-details.filter";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { CODE_BY_STATUS, ProblemDetailsFilter } from "./problem-details.filter";
 
 /**
  * The filter every error passes through. Its job is that a client sees one shape whatever failed,
@@ -250,5 +252,76 @@ describe("ProblemDetailsFilter", () => {
       const { body } = capture(new Error("sensitive detail here"));
       expect(JSON.stringify(body)).not.toContain("sensitive detail here");
     });
+  });
+});
+
+/**
+ * The one promise RFC 9457 makes about `type` is that dereferencing it yields documentation
+ * (s3.1.1). Ours is derived from the code, so keeping that promise means every code the filter
+ * can emit must have a heading in problems.md.
+ *
+ * This READS problems.md. An earlier version of this suite only asserted that a derived `type`
+ * matched a regex, which proves the string was built correctly and nothing about whether the
+ * target exists. It passed while four emittable codes (method-not-allowed, not-acceptable,
+ * payload-too-large, unsupported-media-type) pointed at headings that were never written, and
+ * while FORBIDDEN pointed at `#http-403` before it was mapped. A test that asserts a derived
+ * string is not a test that the target exists.
+ */
+describe("every emittable type URI resolves to a documented anchor", () => {
+  // Resolved from the repo root, which is where vitest resolves its config from. The
+  // "has parsed the catalogue at all" guard below fails loudly if this path ever misses.
+  const catalogue = readFileSync(resolve(process.cwd(), "problems.md"), "utf8");
+  // Catalogue entries are `### \`kebab-code\``.
+  const documented = new Set([...catalogue.matchAll(/^### `([a-z0-9-]+)`/gm)].map((m) => m[1]));
+
+  const anchorOf = (type: string | undefined) => type?.split("#")[1];
+
+  it("has parsed the catalogue at all", () => {
+    // Guards against a path or format change silently emptying the set, which would make every
+    // assertion below vacuously pass.
+    expect(documented.size).toBeGreaterThan(10);
+  });
+
+  // Framework-raised statuses, enumerated from the table the filter actually uses rather than
+  // from a copy, so adding a status without documenting it fails here.
+  it.each(Object.keys(CODE_BY_STATUS).map(Number))("documents the code for HTTP %i", (status) => {
+    const { body } = capture(new HttpException("provoked", status));
+    const anchor = anchorOf(body?.type);
+    expect(anchor, `no anchor derived from type ${body?.type}`).toBeDefined();
+    expect(
+      documented.has(anchor!),
+      `problems.md has no "### \`${anchor}\`" heading for code ${body?.code} (HTTP ${status})`,
+    ).toBe(true);
+  });
+
+  // Domain errors, each constructed the way callers construct it.
+  const domainErrors = [
+    new TenantNotFoundError("nope"),
+    new TenantAlreadyExistsError("acme"),
+    new EmailAlreadyRegisteredError(),
+    new InvalidCredentialsError(),
+    new InvalidAccessTokenError(),
+    new CrossTenantTokenError(),
+    new ControlPlaneUnauthorizedError(),
+    new TooManyRequestsError(1),
+    new ValidationFailedError([{ detail: "slug must be lowercase", pointer: "#/slug" }]),
+  ];
+
+  it.each(domainErrors.map((e) => [e.constructor.name, e] as const))(
+    "documents %s",
+    (_name, error) => {
+      const { body } = capture(error);
+      const anchor = anchorOf(body?.type);
+      expect(
+        documented.has(anchor!),
+        `problems.md has no "### \`${anchor}\`" heading for code ${body?.code}`,
+      ).toBe(true);
+    },
+  );
+
+  it("documents the catch-all used for an unknown throw", () => {
+    const { body } = capture(new Error("something nobody mapped"));
+    expect(body?.code).toBe("INTERNAL_ERROR");
+    expect(documented.has(anchorOf(body?.type)!)).toBe(true);
   });
 });
