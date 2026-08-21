@@ -119,6 +119,33 @@ rather than the request path. Fixed with `"js-yaml@4": "^4.3.1"` on the same rea
 paragraph above, and for one more: the audit gate does not grade on reachability, and teaching it to
 would mean deciding, every week and by hand, which advisories are allowed to stay red.
 
+The pass on 2026-08-21 flagged
+[GHSA-ggr8-5vv4-36mx](https://github.com/advisories/GHSA-ggr8-5vv4-36mx), stack exhaustion
+(CWE-674) in `deepmerge-ts` below 8.0.0: `deepmerge()` recurses until
+`RangeError: Maximum call stack size exceeded` when both inputs carry self-references at the same
+property path. It reaches us on one path only, `packages/db > prisma@7.9.1 > @prisma/config@7.9.1 >
+deepmerge-ts@7.1.5`, and through the `@prisma/client` copy of that same chain.
+
+**There was nothing upstream to wait for.** `prisma@7.9.1` was the current release and its
+`@prisma/config` still pinned `deepmerge-ts` at 7.1.5, so the choice was an override or an entry in
+the accepted table above. Fixed with `"deepmerge-ts@7": "^8.0.1"`, scoped to the vulnerable major so
+it stops rewriting anything the day Prisma moves to 8 on its own.
+
+The exposure was low, and lower than the other build-time cases: `@prisma/config` merges **this
+repository's own** Prisma configuration, so the merged input is authored here rather than supplied by
+anyone, and no request path reaches it. As with `js-yaml`, that is an argument for not panicking and
+not an argument for annotating it. Removing the vulnerable version keeps the inventory accurate, and
+a suppression entry would have left the dependency row of COMPLIANCE.md resting on a footnote.
+
+Crossing a major version needed checking rather than assuming, since 8.0.0 is a breaking release of a
+package this repo never calls directly. Verified by resolution and by exercising the only consumer:
+`pnpm why deepmerge-ts -r` reports 8.0.1 for every consumer and
+`grep -oE 'deepmerge-ts@[0-9.]+' pnpm-lock.yaml | sort -u` yields exactly one version, `pnpm audit`
+reports no known vulnerabilities, `pnpm test` (248), `pnpm typecheck`, `pnpm lint`, `pnpm format:check` and
+`pnpm build` all pass, and `prisma -v` still reports 7.9.1 with a resolving schema engine. **Revisit
+when** `@prisma/config` declares `deepmerge-ts` 8 or later, at which point this entry and its override
+should be deleted rather than left to rewrite a version nobody asks for.
+
 ### One override that is not an advisory fix
 
 `"fastify@5": "^5.11.0"` is version alignment, not remediation, and is recorded here so every entry in
