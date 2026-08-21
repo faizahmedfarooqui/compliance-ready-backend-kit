@@ -144,33 +144,64 @@ package this repo never calls directly. Verified by resolution and by exercising
 `pnpm why deepmerge-ts -r` reports 8.0.1 for every consumer and
 `grep -oE 'deepmerge-ts@[0-9]+\.[0-9]+\.[0-9]+' pnpm-lock.yaml | sort -u` yields exactly one
 version (the looser `[0-9.]+` also matches the `deepmerge-ts@7` override key, so it reports two), `pnpm audit`
-reports no known vulnerabilities, `pnpm test` (248), `pnpm typecheck`, `pnpm lint`, `pnpm format:check` and
+reports no known vulnerabilities, and `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check` and
 `pnpm build` all pass, and `prisma -v` still reports 7.9.1 with a resolving schema engine. **Revisit
 when** `@prisma/config` declares `deepmerge-ts` 8 or later, at which point this entry and its override
 should be deleted rather than left to rewrite a version nobody asks for.
 
 ### One override that is not an advisory fix
 
-`"fastify@5": "^5.11.0"` is version alignment, not remediation, and is recorded here so every entry in
-`pnpm.overrides` has a reason attached. `@nestjs/platform-fastify` depends on `fastify` exactly, at
-`5.10.0`, so the adapter, not this repo's `services/auth` dependency, decides which Fastify actually
-serves requests. Bumping the direct dependency alone therefore moved only the type definitions the
-code compiles against, leaving two Fastify copies in the tree and 5.11.0 types describing a 5.10.0
-server, which is a small instance of the skew that keeps `@types/node` majors pinned. The override
-collapses both to 5.11.0 and picks up 5.11.0's fix for honouring quoted strings in `Content-Type`
-parameter values, a parameter this service reads on every request and the same class of parsing bug
-behind four Fastify advisories. Verified the way the `find-my-way` override was, by resolution:
-`pnpm why fastify -r` reports 5.11.0 for both `services/auth` and `@nestjs/platform-fastify`, and one
-one `fastify` version remains in the lockfile. The cost, said plainly, is that the adapter now runs
-against a Fastify version its own maintainers did not pin, which is why the end-to-end smoke test
-matters more than usual here.
+`"fastify@5": "^5.12.1"` began as version alignment rather than remediation, and is recorded here so
+every entry in `pnpm.overrides` has a reason attached. It has since become both.
 
-**The override is now the single source of truth for the Fastify version, and that has a sharp
-edge.** It was found one day later, on the very next Dependabot run. An override range is not a
-floor that drifts upward: `^5.11.0` is satisfied by 5.11.0, so when Dependabot bumped
-`services/auth` to `^5.11.3`, `pnpm install` left the lockfile on 5.11.0 and the "upgrade" changed
-nothing at all. A bump that appears to land and does nothing is worse than one that fails, so when
-raising Fastify, **change the override too, and confirm by resolution**:
+**Why it exists.** `@nestjs/platform-fastify` depends on `fastify` EXACTLY, not by range, so the
+adapter and not this repo's `services/auth` dependency decides which Fastify actually serves
+requests. Bumping the direct dependency alone therefore moved only the type definitions the code
+compiles against, leaving two Fastify copies in the tree and newer types describing an older server,
+which is a small instance of the skew that keeps `@types/node` majors pinned. The override collapses
+both to one version.
+
+**Nest's pin moves, so the gap changes rather than closes.** 11.1.28 pinned `5.10.0`, which is what
+made the original skew glaring; 11.2.1 pins `5.11.3`. Do not assume the two are still far apart, and
+do not assume they have converged either: check, because the answer decides whether the override is
+holding Fastify back or pushing it forward.
+
+**As of 5.12.1 it is remediation too, and this is the important part.** Fastify 5.12.1 fixes two
+advisories, both affecting `< 5.12.1`, so the `5.11.3` that Nest pins is vulnerable to both:
+
+- [GHSA-3m5p-2c4r-xxw2](https://github.com/fastify/fastify/security/advisories/GHSA-3m5p-2c4r-xxw2)
+  (moderate, CVSS 6.1): the NUMERIC `trustProxy` form stays spoofable, so an attacker with direct
+  access to the origin can bypass the proxy guard and inject host headers.
+- [GHSA-w2qp-rph6-63g4](https://github.com/fastify/fastify/security/advisories/GHSA-w2qp-rph6-63g4)
+  (moderate, CVSS 5.4): a route with a root-level primitive body schema and type coercion validates
+  the coerced value and then hands the handler the original, unvalidated one.
+
+**Neither is reachable in this kit as configured, stated precisely because "we use Fastify" is not
+the same as "we are exposed".** `trustProxy` is parsed as `.pipe(z.boolean())` in
+`packages/config/src/index.ts`, so even `TRUST_PROXY=1` becomes boolean `true` and the hop-count
+code path cannot be configured from here at all. And no route declares a Fastify schema: validation
+is class-validator DTOs through Nest's pipe, so there is no root-level primitive body to coerce.
+Taken anyway, because a downstream consumer who sets a numeric `trustProxy` or adds a Fastify route
+schema would be exposed, and because being one minor ahead of Nest's pin is a cost this entry
+already accepted.
+
+**`pnpm audit` did not catch either of them, and that is worth writing down.** Both were repository
+advisories not yet published to the global database, so the gate reported "No known vulnerabilities
+found" against a version affected by two of them. The gate is a floor, not a ceiling: reading the
+release notes of anything in the request path is not optional just because the audit is green.
+
+**Verified by resolution**, the way the `find-my-way` override was: `pnpm why fastify -r` reports
+5.12.1 for both `services/auth` and `@nestjs/platform-fastify`, and exactly one `fastify` version
+remains in the lockfile. The cost, said plainly, is that the adapter runs against a Fastify version
+its own maintainers did not pin, which is why the end-to-end smoke test matters more than usual
+here. 92 checks and `pnpm verify:claims` both pass on it.
+
+**The override is the single source of truth for the Fastify version, and that has a sharp edge that
+has now caught us twice.** An override range is not a floor that drifts upward. `^5.11.0` is
+satisfied by 5.11.0, so when Dependabot bumped `services/auth` to `^5.11.3`, `pnpm install` left the
+lockfile on 5.11.0 and the "upgrade" changed nothing; `^5.11.3` then did the same to the `^5.12.0`
+bump. A bump that appears to land and does nothing is worse than one that fails, because CI stays
+green. So when raising Fastify, **change the override too, and confirm by resolution**:
 
 ```bash
 pnpm why fastify -r | grep -A1 platform-fastify   # must report the version you intended
