@@ -5,7 +5,7 @@
  *
  * WHO THIS IS FOR, because it decides the shape of everything below. The audience is someone
  * evaluating the kit who wants to know whether a row in COMPLIANCE.md is true. That is a different
- * question from the one a test suite answers. `pnpm test` says "248 tests pass", which is a fact
+ * question from the one a test suite answers. `pnpm test` says "267 tests pass", which is a fact
  * about this repository's diligence and not an answer to "is multi-tenant isolation real". So the
  * output is grouped by control, each with the HIPAA / PCI / SOC 2 citation it claims to support,
  * and the assertions are quoted back in the words they were written in.

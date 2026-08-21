@@ -137,7 +137,7 @@ like a broken install.
 `pnpm verify:claims` is the one to run if you are evaluating rather than developing. It executes the
 smoke suite, both audit probes, the slowloris probe, the unit tests and `pnpm audit`, then reports
 each result grouped by the control it supports, with that control's HIPAA, PCI-DSS and SOC 2 citation
-alongside: 51 items across the nine Implemented rows, plus one on a Partial row. "248 tests pass" is
+alongside: 51 items across the nine Implemented rows, plus one on a Partial row. "267 tests pass" is
 a fact about this repository; that output answers whether a given row in
 [COMPLIANCE.md](./COMPLIANCE.md) is actually true.
 
@@ -495,7 +495,7 @@ a request, until its database is fully built.
 ## Status
 
 v0.2 is **auth + RBAC + a key registry + rate limiting + an authenticated control plane + an
-append-only audit log**, on the database-per-tenant foundation. It builds, typechecks, passes 248 unit
+append-only audit log**, on the database-per-tenant foundation. It builds, typechecks, passes 267 unit
 tests and a 92-check end-to-end smoke test against a live Postgres and Redis, run in CI on every push.
 `pnpm verify:claims` reproduces the evidence behind every control the mapping marks Implemented, and
 CI fails if one of those rows has no evidence registered.
