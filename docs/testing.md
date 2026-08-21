@@ -6,7 +6,7 @@ What is proven, how, and the deliberate decision not to unit test the database l
 
 | Command | What it is | Needs |
 | --- | --- | --- |
-| `pnpm test` | 248 unit tests across 15 files | nothing |
+| `pnpm test` | 267 unit tests across 15 files | nothing |
 | `pnpm smoke` | 92 end-to-end checks | a running service, Postgres, Redis |
 | `pnpm smoke:slowloris` | raw-socket request-timeout probe | a running service |
 | `pnpm audit:contention` | concurrent-append fork probe | Postgres |
@@ -23,7 +23,7 @@ tested for the reasons below.
 ## Reading the results by control instead of by suite
 
 The table above is organised by mechanism, which is the wrong axis for the question most readers of this
-repository actually have. "248 tests pass" is a fact about the project's diligence; it is not an answer to
+repository actually have. "267 tests pass" is a fact about the project's diligence; it is not an answer to
 "is multi-tenant isolation real". `pnpm verify:claims` runs the same suites and reports every result
 grouped under the control it supports, with that control's HIPAA, PCI-DSS and SOC 2 citation beside it:
 51 items across the nine rows COMPLIANCE.md marks Implemented, plus one on a Partial row.

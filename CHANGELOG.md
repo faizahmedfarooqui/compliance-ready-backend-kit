@@ -97,6 +97,6 @@ Stated because a compliance kit that hides its gaps is worse than no kit. Full l
 
 ### Verification
 
-Every claim above is checkable on your own machine: 248 unit tests, a 92-check end-to-end suite against
+Every claim above is checkable on your own machine: 267 unit tests, a 92-check end-to-end suite against
 real Postgres and Redis, and `pnpm verify:claims` reporting 51 evidence items across the nine Implemented
 rows. CI runs all of it on every commit.
