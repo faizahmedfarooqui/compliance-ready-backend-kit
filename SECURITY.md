@@ -144,7 +144,7 @@ package this repo never calls directly. Verified by resolution and by exercising
 `pnpm why deepmerge-ts -r` reports 8.0.1 for every consumer and
 `grep -oE 'deepmerge-ts@[0-9]+\.[0-9]+\.[0-9]+' pnpm-lock.yaml | sort -u` yields exactly one
 version (the looser `[0-9.]+` also matches the `deepmerge-ts@7` override key, so it reports two), `pnpm audit`
-reports no known vulnerabilities, `pnpm test` (248), `pnpm typecheck`, `pnpm lint`, `pnpm format:check` and
+reports no known vulnerabilities, and `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check` and
 `pnpm build` all pass, and `prisma -v` still reports 7.9.1 with a resolving schema engine. **Revisit
 when** `@prisma/config` declares `deepmerge-ts` 8 or later, at which point this entry and its override
 should be deleted rather than left to rewrite a version nobody asks for.
