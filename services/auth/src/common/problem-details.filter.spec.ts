@@ -274,7 +274,11 @@ describe("every emittable type URI resolves to a documented anchor", () => {
   // Catalogue entries are `### \`kebab-code\``.
   const documented = new Set([...catalogue.matchAll(/^### `([a-z0-9-]+)`/gm)].map((m) => m[1]));
 
-  const anchorOf = (type: string | undefined) => type?.split("#")[1];
+  // Returns "" rather than undefined when there is no fragment, so no call site needs an
+  // assertion. Both styles are forbidden here: `as string` trips
+  // non-nullable-type-assertion-style and `!` trips no-non-null-assertion. "" is never a
+  // documented anchor, so a type URI without a fragment still fails.
+  const anchorOf = (type: string | undefined): string => type?.split("#")[1] ?? "";
 
   it("has parsed the catalogue at all", () => {
     // Guards against a path or format change silently emptying the set, which would make every
@@ -287,9 +291,9 @@ describe("every emittable type URI resolves to a documented anchor", () => {
   it.each(Object.keys(CODE_BY_STATUS).map(Number))("documents the code for HTTP %i", (status) => {
     const { body } = capture(new HttpException("provoked", status));
     const anchor = anchorOf(body?.type);
-    expect(anchor, `no anchor derived from type ${body?.type}`).toBeDefined();
+    expect(anchor, `no anchor derived from type ${body?.type}`).not.toBe("");
     expect(
-      documented.has(anchor!),
+      documented.has(anchor),
       `problems.md has no "### \`${anchor}\`" heading for code ${body?.code} (HTTP ${status})`,
     ).toBe(true);
   });
@@ -313,7 +317,7 @@ describe("every emittable type URI resolves to a documented anchor", () => {
       const { body } = capture(error);
       const anchor = anchorOf(body?.type);
       expect(
-        documented.has(anchor!),
+        documented.has(anchor),
         `problems.md has no "### \`${anchor}\`" heading for code ${body?.code}`,
       ).toBe(true);
     },
@@ -322,6 +326,6 @@ describe("every emittable type URI resolves to a documented anchor", () => {
   it("documents the catch-all used for an unknown throw", () => {
     const { body } = capture(new Error("something nobody mapped"));
     expect(body?.code).toBe("INTERNAL_ERROR");
-    expect(documented.has(anchorOf(body?.type)!)).toBe(true);
+    expect(documented.has(anchorOf(body?.type))).toBe(true);
   });
 });
