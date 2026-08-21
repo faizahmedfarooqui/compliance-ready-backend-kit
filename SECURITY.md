@@ -151,7 +151,7 @@ should be deleted rather than left to rewrite a version nobody asks for.
 
 ### One override that is not an advisory fix
 
-`"fastify@5": "^5.12.0"` began as version alignment rather than remediation, and is recorded here so
+`"fastify@5": "^5.12.1"` began as version alignment rather than remediation, and is recorded here so
 every entry in `pnpm.overrides` has a reason attached. It has since become both.
 
 **Why it exists.** `@nestjs/platform-fastify` depends on `fastify` EXACTLY, not by range, so the
