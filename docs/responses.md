@@ -210,12 +210,15 @@ carrying internals.
    code.
 2. Map the code to a status in the filter.
 3. Document it in [problems.md](../problems.md) under a heading whose anchor matches the derived one.
-   **Skipping this fails the build**, via the assertions in the table above rather than any one of them.
-4. Add it to the `domainErrors` list in `problem-details.filter.spec.ts`. That list is hand-maintained,
-   unlike the framework statuses beside it which are enumerated from `CODE_BY_STATUS`, so a new domain
-   error is only covered by that spec once someone adds it. The OpenAPI-driven smoke assertion still
-   catches an undocumented one, so this is belt and braces rather than the only guard, but a
-   hand-maintained list nobody extends is how the next four missing headings will happen.
+4. Add it to the `domainErrors` list in `problem-details.filter.spec.ts`.
+
+**Steps 3 and 4 are one step, and doing only the third is how a code goes undocumented.** Nothing
+enumerates domain errors automatically: that list is hand-maintained, unlike the framework statuses
+beside it which come from `CODE_BY_STATUS`, and the OpenAPI-driven smoke assertion only sees
+responses the document actually declares. So a new error that is absent from both lists is checked
+by nothing, and skipping step 3 then costs you no build failure at all. Add it to the list and a
+missing heading is caught immediately. This is the same shape as the four framework codes that went
+undocumented: not a weak check, but a code that no list knew about.
 
 ## One wiring trap worth knowing
 
