@@ -79,8 +79,13 @@ Two things about that gate are deliberate.
 rows COMPLIANCE.md marks as a real control. When an advisory appears, fix it or record an exception
 here. Do not lower the threshold.
 
+**Settings live in `pnpm-workspace.yaml`, not `package.json`.** pnpm 11 stopped reading the
+`pnpm` field in `package.json`, and it warns rather than erroring, so an unmigrated `overrides`
+block silently stops pinning anything. If you are looking for these settings and cannot find
+them, that is why.
+
 **Exceptions are documented, not silent.** Suppressing an advisory without saying why is
-indistinguishable from not noticing it. Every entry in `pnpm.auditConfig.ignoreGhsas` must have a
+indistinguishable from not noticing it. Every entry in `auditConfig.ignoreGhsas` (in `pnpm-workspace.yaml`) must have a
 matching entry below, with the reasoning and what would make us revisit it.
 
 ### Accepted advisories
@@ -95,7 +100,7 @@ For the record, because it shows the gate working: the first run flagged
 [GHSA-c96f-x56v-gq3h](https://github.com/advisories/GHSA-c96f-x56v-gq3h), an HTTP/2 denial of
 service in `find-my-way` at or below 9.6.0 — the router underneath Fastify, squarely in the
 production path. `fastify` itself allows `^9.6.0` and so would take the fix, but
-`@nestjs/platform-fastify` pins `9.6.0` exactly. Resolved with a `pnpm.overrides` entry scoped to
+`@nestjs/platform-fastify` pins `9.6.0` exactly. Resolved with an `overrides` entry scoped to
 the 9.x line (`"find-my-way@9": "^9.7.0"`), which leaves an unrelated 8.x consumer in the tooling
 alone. Verified by confirming both `fastify` and `@nestjs/platform-fastify` now resolve 9.7.0.
 
@@ -149,10 +154,30 @@ reports no known vulnerabilities, and `pnpm test`, `pnpm typecheck`, `pnpm lint`
 when** `@prisma/config` declares `deepmerge-ts` 8 or later, at which point this entry and its override
 should be deleted rather than left to rewrite a version nobody asks for.
 
+### Install scripts are denied by default
+
+`pnpm-workspace.yaml` carries an `allowBuilds` map, and anything absent from it is denied.
+`strictDepBuilds` defaults to true, so an install that encounters an unreviewed build script
+**fails** rather than warning. Four dependencies declare one; three are allowed and one is not:
+
+| Package | Allowed | Why |
+| --- | --- | --- |
+| `argon2` | yes | Native module, compiled or resolved by `node-gyp-build`. Password hashing does not work without it. |
+| `prisma` | yes | `preinstall` entry point. |
+| `@prisma/engines` | yes | `postinstall` places the query and schema engines. |
+| `@scarf/scarf` | **no** | `postinstall` runs `node ./report.js`, which is install telemetry. Listed explicitly as `false` rather than merely omitted, so the intent is on the record: nothing here phones home on install. |
+
+**This is the control CVE-2025-54313 actually needed.** The malicious `eslint-config-prettier`
+releases carried their payload in an install script, not in the linter's own code, so no amount
+of care about which linter to use would have helped. Denying scripts by default would have.
+
+Note what it does not do: it stops a package from executing at install time, not from being
+malicious when imported. A compromised library that your code calls still runs.
+
 ### One override that is not an advisory fix
 
 `"fastify@5": "^5.12.1"` began as version alignment rather than remediation, and is recorded here so
-every entry in `pnpm.overrides` has a reason attached. It has since become both.
+every entry in `overrides` has a reason attached. It has since become both.
 
 **Why it exists.** `@nestjs/platform-fastify` depends on `fastify` EXACTLY, not by range, so the
 adapter and not this repo's `services/auth` dependency decides which Fastify actually serves
@@ -208,7 +233,7 @@ pnpm why fastify -r | grep -A1 platform-fastify   # must report the version you 
 grep -E '^  fastify@[0-9]' pnpm-lock.yaml         # must be exactly one line
 ```
 
-The same applies to every entry in `pnpm.overrides`: each one takes that dependency's version out of
+The same applies to every entry in `overrides`: each one takes that dependency's version out of
 the hands of the package that declares it, including out of Dependabot's.
 
 ## What this project is not
