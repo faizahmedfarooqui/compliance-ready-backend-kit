@@ -129,16 +129,34 @@ Interpolating request data into `title` breaks the RFC's contract and makes the 
 **you should change it if you fork the kit**, or your API will cite this repository's documentation for
 its own errors.
 
-A unit assertion in `problem-details.filter.spec.ts` **reads problems.md** and fails if any code the
-filter can emit has no matching heading, so the RFC's promise that the URI yields documentation stays
-true rather than aspirational.
+Three assertions guard that, from different directions, and all three read
+[problems.md](../problems.md) rather than merely checking the shape of the string:
 
-This previously overstated what was checked, and the gap was real. The suite only asserted that a
-derived `type` matched a regex, which proves the string was built correctly and nothing about whether
-the target exists. Four emittable codes (`method-not-allowed`, `not-acceptable`, `payload-too-large`,
-`unsupported-media-type`) pointed at headings that had never been written, and the check that would
-have caught them was the check being described. **A test that asserts a derived string is not a test
-that the target exists.**
+| Where | Covers |
+| --- | --- |
+| `problem-details.filter.spec.ts` | every code the filter can emit, enumerated from `CODE_BY_STATUS` |
+| `scripts/smoke-test.sh` step 15 | the anchor of the error the suite actually provokes, over the wire |
+| `scripts/smoke-test.sh` step 17 | every 4xx and 5xx code the OpenAPI document declares |
+
+The first is the exhaustive one and it is the newest. The other two are older, and worth keeping
+because they check the promise end to end: the smoke assertions dereference an anchor from a
+response a real client received, which is the thing RFC 9457 actually promises.
+
+**Why four codes still slipped through, because it says something about coverage that is easy to
+repeat.** `method-not-allowed`, `not-acceptable`, `payload-too-large` and `unsupported-media-type`
+pointed at headings nobody had written. Both smoke assertions were reading real files and passing
+honestly; neither could have caught these, because one only sees the error the suite provokes and
+the other only sees what the OpenAPI document enumerates as a response. All four are raised by the
+framework rather than by a controller, so they appear in neither list. The gap was not a weak check,
+it was **three checks that all took their list of codes from somewhere other than the filter**. The
+unit assertion closes it by enumerating from the filter's own table, so a status added to
+`CODE_BY_STATUS` without a catalogue entry now fails.
+
+An earlier version of this page described the pre-existing coverage as asserting only "that a
+derived `type` matched a regex". That was wrong and is corrected here: it undersold two assertions
+that do dereference the anchor. Worth correcting rather than quietly rewriting, because the
+misdiagnosis was more flattering to the fix than the truth was, and a page about honest error
+contracts is a poor place to leave that.
 
 ## Status codes
 
@@ -191,8 +209,16 @@ carrying internals.
 1. Subclass `DomainError` with a stable `title`, an occurrence-specific `message`, and a `SCREAMING_SNAKE`
    code.
 2. Map the code to a status in the filter.
-3. Document it in [problems.md](../problems.md) under a heading whose anchor matches the derived one. **A
-   smoke assertion fails if you skip this**, which is the mechanism that keeps the catalogue honest.
+3. Document it in [problems.md](../problems.md) under a heading whose anchor matches the derived one.
+4. Add it to the `domainErrors` list in `problem-details.filter.spec.ts`.
+
+**Steps 3 and 4 are one step, and doing only the third is how a code goes undocumented.** Nothing
+enumerates domain errors automatically: that list is hand-maintained, unlike the framework statuses
+beside it which come from `CODE_BY_STATUS`, and the OpenAPI-driven smoke assertion only sees
+responses the document actually declares. So a new error that is absent from both lists is checked
+by nothing, and skipping step 3 then costs you no build failure at all. Add it to the list and a
+missing heading is caught immediately. This is the same shape as the four framework codes that went
+undocumented: not a weak check, but a code that no list knew about.
 
 ## One wiring trap worth knowing
 
