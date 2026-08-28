@@ -1,3 +1,48 @@
 packages:
   - "packages/*"
   - "services/*"
+
+# ---------------------------------------------------------------------------
+# pnpm settings live here, NOT in package.json.
+#
+# pnpm 11 stopped reading the `pnpm` field in package.json entirely. It does not
+# error, it warns and ignores, which means an unmigrated `overrides` block silently
+# stops pinning anything. Every entry below was moved here from that field during the
+# pnpm 9 -> 11 upgrade, and the reasoning for each override is in SECURITY.md.
+# ---------------------------------------------------------------------------
+
+# Which dependencies may run install scripts. Anything not listed is DENIED, and
+# strictDepBuilds (default true) fails the install rather than warning, so a new
+# dependency that wants to run a script cannot arrive unnoticed.
+#
+# This is the control that CVE-2025-54313 needed: the malicious eslint-config-prettier
+# releases carried their payload in an install script, not in the linter's own code.
+allowBuilds:
+  # Native module, compiled or resolved by node-gyp-build.
+  argon2: true
+  # Prisma's preinstall entry, and the postinstall that places the query engines.
+  prisma: true
+  "@prisma/engines": true
+  # Install telemetry (`node ./report.js`). Explicitly denied rather than merely
+  # absent, so the intent is on the record: nothing in this repo phones home on install.
+  "@scarf/scarf": false
+
+# Version overrides. Each takes a dependency's version out of the hands of the package
+# that declares it, INCLUDING out of Dependabot's, so raising one of these means
+# editing here as well. See SECURITY.md for the advisory or alignment reason behind each.
+overrides:
+  find-my-way@9: ^9.7.0
+  fastify@5: ^5.12.1
+  js-yaml@5: ^5.2.2
+  js-yaml@4: ^4.3.1
+  fast-uri@4: ^4.1.2
+  fast-uri@3: ^3.1.5
+  brace-expansion@5: ^5.0.9
+  brace-expansion@1: ^1.1.18
+  deepmerge-ts@7: ^8.0.1
+
+# Advisories accepted with a documented reason. Every entry here must have a matching
+# entry in SECURITY.md's "Accepted advisories" table.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-mh99-v99m-4gvg
