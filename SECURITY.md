@@ -174,6 +174,35 @@ of care about which linter to use would have helped. Denying scripts by default 
 Note what it does not do: it stops a package from executing at install time, not from being
 malicious when imported. A compromised library that your code calls still runs.
 
+The 2026-09-16 pass came back with eleven findings across seven advisories, and the shape of it
+is the reason the warning two paragraphs below exists.
+
+`fast-uri` ([GHSA-5jgf-p345-68v8](https://github.com/advisories/GHSA-5jgf-p345-68v8),
+[GHSA-f65p-4m7j-42xc](https://github.com/advisories/GHSA-f65p-4m7j-42xc),
+[GHSA-fph4-wmhf-6fwf](https://github.com/advisories/GHSA-fph4-wmhf-6fwf),
+[GHSA-jqff-g426-hqxp](https://github.com/advisories/GHSA-jqff-g426-hqxp), patched `>=4.1.3` and
+`>=3.1.6`) and `js-yaml`
+([GHSA-2883-xcg3-v3hh](https://github.com/advisories/GHSA-2883-xcg3-v3hh), patched `>=4.3.2`)
+were both **already overridden here**, and both were sitting at exactly their floor: 4.1.2
+against an `^4.1.2` override, 3.1.5 against `^3.1.5`, 4.3.1 against `^4.3.1`. Dependabot cannot
+fix these, because it does not manage this file, and a caret range is satisfied by its own floor
+so `--frozen-lockfile` never drifts upward. **An override silently becomes a ceiling the moment
+its floor goes vulnerable.** Fixed by raising all three floors to the patched versions, which
+resolved 4.1.5, 3.1.8 and 4.3.2.
+
+`mysql2` ([GHSA-3f6p-5ww8-9rcr](https://github.com/advisories/GHSA-3f6p-5ww8-9rcr),
+[GHSA-rgwj-5xj2-c3m3](https://github.com/advisories/GHSA-rgwj-5xj2-c3m3), patched `>=3.23.1`) was
+new: no override, reaching us at 3.15.3 only through Prisma's MySQL support. This repo uses
+`@prisma/adapter-pg` and every schema declares `provider = "postgresql"`, so **that code path is
+never executed here**. Fixed anyway with `mysql2@3: ^3.24.4`, on the same reasoning as `js-yaml`
+above: an accurate dependency inventory is worth more than an argument about reachability, and
+the next person to add a MySQL adapter should inherit a patched version rather than that argument.
+
+**The operational lesson, since this is now the second time it has bitten.** Raising a dependency
+is not enough when that dependency is overridden; the override is the real version. After any
+advisory on an overridden package, raise the floor here and confirm by resolution, not by the
+`package.json` entry.
+
 ### One override that is not an advisory fix
 
 `"fastify@5": "^5.12.1"` began as version alignment rather than remediation, and is recorded here so
