@@ -245,21 +245,27 @@ found" against a version affected by two of them. The gate is a floor, not a cei
 release notes of anything in the request path is not optional just because the audit is green.
 
 **Verified by resolution**, the way the `find-my-way` override was: `pnpm why fastify -r` reports
-5.12.1 for both `services/auth` and `@nestjs/platform-fastify`, and exactly one `fastify` version
-remains in the lockfile. The cost, said plainly, is that the adapter runs against a Fastify version
+one version of `fastify` for both `services/auth` and `@nestjs/platform-fastify`. That version was
+5.12.1 when this entry was written and is **5.12.4** as of 2026-09-16; re-run the commands below
+rather than trusting this sentence, which is exactly the kind of claim that goes stale. The cost, said plainly, is that the adapter runs against a Fastify version
 its own maintainers did not pin, which is why the end-to-end smoke test matters more than usual
 here. 92 checks and `pnpm verify:claims` both pass on it.
 
 **The override is the single source of truth for the Fastify version, and that has a sharp edge that
-has now caught us twice.** An override range is not a floor that drifts upward. `^5.11.0` is
+keeps catching us:** twice on `fastify` below, then again on `fast-uri` and `js-yaml` in the
+2026-09-16 pass above. An override range is not a floor that drifts upward. `^5.11.0` is
 satisfied by 5.11.0, so when Dependabot bumped `services/auth` to `^5.11.3`, `pnpm install` left the
 lockfile on 5.11.0 and the "upgrade" changed nothing; `^5.11.3` then did the same to the `^5.12.0`
 bump. A bump that appears to land and does nothing is worse than one that fails, because CI stays
 green. So when raising Fastify, **change the override too, and confirm by resolution**:
 
 ```bash
-pnpm why fastify -r | grep -A1 platform-fastify   # must report the version you intended
-grep -E '^  fastify@[0-9]' pnpm-lock.yaml         # must be exactly one line
+pnpm why fastify -r | grep -E '^fastify@|Found [0-9]+ version'   # the version, and that there is one
+# Full semver only, deduped, and quote-tolerant: the loose `fastify@[0-9]` also matches
+# the `fastify@5:` override key in the lockfile's own overrides block, and pnpm quotes
+# scoped keys (`'@fastify/static@10.1.3':`) so a pattern without `'?` finds nothing for
+# them. Applies to every override, not just this one.
+grep -oE "^  '?fastify@[0-9]+\.[0-9]+\.[0-9]+" pnpm-lock.yaml | tr -d " '" | sort -u
 ```
 
 The same applies to every entry in `overrides`: each one takes that dependency's version out of
