@@ -261,10 +261,11 @@ green. So when raising Fastify, **change the override too, and confirm by resolu
 
 ```bash
 pnpm why fastify -r | grep -E '^fastify@|Found [0-9]+ version'   # the version, and that there is one
-# Full semver only, and deduped: the loose `fastify@[0-9]` also matches the
-# `fastify@5:` override key in the lockfile's own overrides block, so it can never
-# return one line. Two more match the package and snapshot entries for one version.
-grep -oE '^  fastify@[0-9]+\.[0-9]+\.[0-9]+' pnpm-lock.yaml | sort -u   # exactly one version
+# Full semver only, deduped, and quote-tolerant: the loose `fastify@[0-9]` also matches
+# the `fastify@5:` override key in the lockfile's own overrides block, and pnpm quotes
+# scoped keys (`'@fastify/static@10.1.3':`) so a pattern without `'?` finds nothing for
+# them. Applies to every override, not just this one.
+grep -oE "^  '?fastify@[0-9]+\.[0-9]+\.[0-9]+" pnpm-lock.yaml | tr -d " '" | sort -u
 ```
 
 The same applies to every entry in `overrides`: each one takes that dependency's version out of
