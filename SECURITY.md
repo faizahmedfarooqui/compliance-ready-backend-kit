@@ -174,7 +174,7 @@ of care about which linter to use would have helped. Denying scripts by default 
 Note what it does not do: it stops a package from executing at install time, not from being
 malicious when imported. A compromised library that your code calls still runs.
 
-The 2026-09-16 pass came back with eleven findings across five advisories, and the shape of it
+The 2026-09-16 pass came back with eleven findings across seven advisories, and the shape of it
 is the reason the warning two paragraphs below exists.
 
 `fast-uri` ([GHSA-5jgf-p345-68v8](https://github.com/advisories/GHSA-5jgf-p345-68v8),
@@ -195,7 +195,7 @@ resolved 4.1.5, 3.1.8 and 4.3.2.
 new: no override, reaching us at 3.15.3 only through Prisma's MySQL support. This repo uses
 `@prisma/adapter-pg` and every schema declares `provider = "postgresql"`, so **that code path is
 never executed here**. Fixed anyway with `mysql2@3: ^3.24.4`, on the same reasoning as `js-yaml`
-below: an accurate dependency inventory is worth more than an argument about reachability, and
+above: an accurate dependency inventory is worth more than an argument about reachability, and
 the next person to add a MySQL adapter should inherit a patched version rather than that argument.
 
 **The operational lesson, since this is now the second time it has bitten.** Raising a dependency
