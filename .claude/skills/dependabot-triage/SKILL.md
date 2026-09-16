@@ -158,8 +158,12 @@ So for any package with an override, treat the override as the version's single 
 bump it in the same commit, and confirm by resolution rather than by the PR's diff.
 
 ```bash
-pnpm why <pkg> -r | grep -A1 <dependent>    # reports the version you actually intended?
-grep -E '^  <pkg>@[0-9]' pnpm-lock.yaml     # exactly one line, or you have two copies
+pnpm why <pkg> -r | grep -E '^<pkg>@|Found [0-9]+ version'   # the version, and that there is one
+# Full semver only, and deduped. A loose `<pkg>@[0-9]` also matches the `<pkg>@<major>:` key in
+# the lockfile's own overrides block, so it can never return one line; the package and snapshot
+# entries add two more for a single version. And `grep -A1 <dependent>` selects the dependent's
+# line plus the one after it, neither of which carries the version.
+grep -oE '^  <pkg>@[0-9]+\.[0-9]+\.[0-9]+' pnpm-lock.yaml | sort -u   # exactly one version
 ```
 
 Worth checking the whole override block whenever a Dependabot PR touches a package that appears in
