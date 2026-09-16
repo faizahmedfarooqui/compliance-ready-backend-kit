@@ -258,8 +258,11 @@ bump. A bump that appears to land and does nothing is worse than one that fails,
 green. So when raising Fastify, **change the override too, and confirm by resolution**:
 
 ```bash
-pnpm why fastify -r | grep -A1 platform-fastify   # must report the version you intended
-grep -E '^  fastify@[0-9]' pnpm-lock.yaml         # must be exactly one line
+pnpm why fastify -r | grep -E '^fastify@|Found [0-9]+ version'   # the version, and that there is one
+# Full semver only, and deduped: the loose `fastify@[0-9]` also matches the
+# `fastify@5:` override key in the lockfile's own overrides block, so it can never
+# return one line. Two more match the package and snapshot entries for one version.
+grep -oE '^  fastify@[0-9]+\.[0-9]+\.[0-9]+' pnpm-lock.yaml | sort -u   # exactly one version
 ```
 
 The same applies to every entry in `overrides`: each one takes that dependency's version out of
