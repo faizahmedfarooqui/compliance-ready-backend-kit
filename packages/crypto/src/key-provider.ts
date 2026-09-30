@@ -60,8 +60,9 @@ const TAG_BYTES = 16;
  * FOR DEVELOPMENT, CI, AND SELF-HOSTED DEPLOYMENTS THAT ACCEPT THE TRADE-OFF. The KEK is held in
  * process memory, which means it is only as protected as the process and its configuration. That
  * is strictly better than storing unwrapped keys in the database, and strictly worse than a KEK
- * that cannot leave a hardware boundary. Use the KMS adapter where a compliance obligation
- * applies.
+ * that cannot leave a hardware boundary. Where a compliance obligation applies, use a KMS or HSM
+ * adapter instead. None ships yet: this interface is the seam for one, and the README roadmap puts
+ * them at v0.4.
  *
  * Wire format: `iv (12 bytes) || ciphertext || tag (16 bytes)`. Self-describing enough to unwrap
  * without extra columns, and versioned through the AAD prefix rather than a magic byte.

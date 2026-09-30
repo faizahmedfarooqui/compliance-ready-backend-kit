@@ -6,8 +6,11 @@ From a fresh clone to an authenticated request, with the steps that are easy to 
 
 - **Node 24.** The current LTS line. `.nvmrc` pins it and CI reads that same file, so the two cannot
   drift. `nvm use` picks it up.
-- **pnpm 9.** The repository is a pnpm workspace; npm and yarn will not resolve the
-  `@compliance-kit/*` links.
+- **pnpm 11.** The repository is a pnpm workspace; npm and yarn will not resolve the
+  `@compliance-kit/*` links. The exact version is pinned by `packageManager` in package.json, and
+  `corepack enable` installs it. Do not substitute an older pnpm: before 10.5 it does not read
+  `pnpm-workspace.yaml`, which is where the security overrides and the install-script policy live, so
+  it would install without either.
 - **Docker.** For local Postgres and Redis. Nothing else uses it.
 - **Redis 6 or newer, if you supply your own.** `pnpm infra:up` runs Redis 7, so this only applies
   when you point `REDIS_URL` at your own server. The client negotiates RESP3, which needs a server

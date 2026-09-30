@@ -107,7 +107,9 @@ list() {
 
 ## Quick start
 
-Requires Node 24 (the current LTS line, pinned in `.nvmrc`), pnpm 9, and Docker.
+Requires Node 24 (the current LTS line, pinned in `.nvmrc`), pnpm 11, and Docker. `corepack enable` gives you
+the exact pnpm the repository pins in `packageManager`. Do not substitute an older one: before 10.5, pnpm
+does not read `pnpm-workspace.yaml`, which is where the security overrides live, so it installs without them.
 
 ```bash
 cp .env.example .env          # non-secret local defaults
@@ -401,7 +403,7 @@ without touching anything else, which is what the `KeyProvider` port exists for.
 pnpm keys:init                       # create the first key of each purpose
 pnpm keys:rotate                     # new key active, previous one retiring
 pnpm keys:list                       # show the registry
-pnpm keys:revoke --kid K --reason R  # destroy the material, keep the row as evidence
+pnpm keys:revoke --kid K --reason R  # remove the material from the row, keep the row as evidence
 pnpm keys:decode "$TOKEN"            # verify a token and print its claims
 ```
 
@@ -559,7 +561,7 @@ Known gaps, stated plainly because a compliance kit that hides its gaps is worse
 
 ## Stack
 
-NestJS 11 (Fastify adapter), TypeScript strict, Prisma 7 with the `@prisma/adapter-pg`
+NestJS 12 (Fastify adapter), TypeScript strict, Prisma 7 with the `@prisma/adapter-pg`
 driver adapter, Postgres 16, Redis 7, Argon2id, pnpm workspaces.
 
 Argon2id parameters are declared explicitly rather than left to library defaults, in one

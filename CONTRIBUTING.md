@@ -67,7 +67,8 @@ So, concretely:
 
 ## Getting set up
 
-Node 24 (the current LTS line, pinned in `.nvmrc`), pnpm 9, Docker.
+Node 24 (the current LTS line, pinned in `.nvmrc`), pnpm 11 (pinned by `packageManager`; `corepack enable`
+installs it, and an older pnpm would skip the overrides in `pnpm-workspace.yaml`), Docker.
 
 **On an Intel Mac you also need the Xcode Command Line Tools.** `argon2` 0.45 ships prebuilt
 binaries for darwin-arm64, linux-x64/arm64/arm, freebsd, and win32-x64, but **not** darwin-x64,

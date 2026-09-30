@@ -161,12 +161,16 @@ async function list(cm: ConnectionManager): Promise<void> {
 }
 
 /**
- * Revoke immediately, destroying the material and keeping the row.
+ * Revoke immediately, removing the material from the row and keeping the row.
  *
- * Destroying `wrapped_key` is the point: a revoked key that still holds its ciphertext has not
+ * Clearing `wrapped_key` is the point: a revoked key that still holds its ciphertext has not
  * really been revoked, and the database CHECK constraint enforces that pairing. The row survives
  * because "this key existed, and was revoked at this time for this reason" is the evidence an
  * assessor asks for.
+ *
+ * Clearing the column does not erase every copy. Postgres keeps the old row version until VACUUM,
+ * and WAL, replicas and backups keep theirs, all still wrapped by the KEK. docs/key-management.md
+ * says what that means where a standard requires key destruction.
  */
 async function revoke(cm: ConnectionManager, kid: string, reason: string): Promise<void> {
   const key = await cm.master.configKey.findUnique({ where: { kid } });
@@ -212,7 +216,7 @@ Manage the deployment's access-token keys.
   pnpm keys:init                      create and activate the first key of each purpose
   pnpm keys:rotate [--purpose P]      create, activate, and retire the previous key
   pnpm keys:list                      show the registry
-  pnpm keys:revoke --kid K --reason R revoke a non-active key, destroying its material
+  pnpm keys:revoke --kid K --reason R revoke a non-active key, removing its material
 
   P is "signing" or "encryption". Omit to rotate both.
 
