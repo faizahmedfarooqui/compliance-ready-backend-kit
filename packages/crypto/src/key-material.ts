@@ -102,22 +102,32 @@ export async function importVerificationKey(publicJwk: JWK): Promise<CryptoKey> 
  * Deriving the public point from the private key and comparing binds the column to the material the
  * KEK protects.
  *
- * Compares the key material fields only. `kid`, `alg` and `use` are registry metadata that the caller
- * already checks by other means (the kid is the row's key, the algorithm a CHECK constraint).
+ * Compares the key material fields only. The metadata a JWK also carries (`kid`, `alg`, `use`) is
+ * checked by `loadStoredKey`, which is the one place a stored row becomes a usable key.
  */
 export async function publicJwkMatchesPrivateKey(
   privatePkcs8: string,
   publicJwk: JWK,
 ): Promise<boolean> {
-  // Extractable for this one comparison only; the key used for signing is imported non-extractable.
+  return sameKeyMaterial(await derivePublicJwk(privatePkcs8), publicJwk);
+}
+
+/**
+ * The public half of a signing key, derived from its private half: `kty`, `crv`, `x` and `y` only.
+ *
+ * Derived rather than read from storage, so that what verifies and what gets published follow from the
+ * material the KEK protects rather than from a column anyone with database write access can edit.
+ */
+export async function derivePublicJwk(privatePkcs8: string): Promise<JWK> {
+  // Extractable for this derivation only; the key used for signing is imported non-extractable.
   const privateKey = await importPKCS8(privatePkcs8, SIGNING_ALG, { extractable: true });
-  const derived = await exportJWK(privateKey);
-  return (
-    derived.kty === publicJwk.kty &&
-    derived.crv === publicJwk.crv &&
-    derived.x === publicJwk.x &&
-    derived.y === publicJwk.y
-  );
+  const { kty, crv, x, y } = await exportJWK(privateKey);
+  return { kty, crv, x, y };
+}
+
+/** True when two JWKs describe the same EC public point. */
+export function sameKeyMaterial(a: JWK, b: JWK): boolean {
+  return a.kty === b.kty && a.crv === b.crv && a.x === b.x && a.y === b.y;
 }
 
 /** A JWKS document, as served from /.well-known/jwks.json. */

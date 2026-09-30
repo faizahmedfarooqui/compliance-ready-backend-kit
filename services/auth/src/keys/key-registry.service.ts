@@ -8,13 +8,13 @@ import {
 import { ConnectionManager, masterClient } from "@compliance-kit/db";
 import {
   LocalKeyProvider,
-  importSigningKey,
-  importVerificationKey,
-  publicJwkMatchesPrivateKey,
+  isKeyUsable,
+  loadStoredKey,
   toJwks,
   type EncryptionKeyResolver,
   type Jwks,
   type KeyProvider,
+  type LoadedKey,
   type CryptoKey,
   type JWK,
   type SigningKeyResolver,
@@ -84,6 +84,7 @@ interface LoadedEncryptionKey {
 interface KeyRow {
   kid: string;
   purpose: masterClient.$Enums.KeyPurpose;
+  algorithm: masterClient.$Enums.KeyAlgorithm;
   state: masterClient.$Enums.KeyState;
   wrappedKey: Uint8Array | null;
   kekId: string;
@@ -230,13 +231,9 @@ export class KeyRegistryService implements OnModuleInit, OnModuleDestroy {
     return this.inFlight;
   }
 
-  /** True when a key may still be used, honouring `not_after` at the point of use. */
+  /** True when a key may still be used, honouring `not_after` at the point of use. See isKeyUsable. */
   private usable(state: masterClient.$Enums.KeyState, notAfter: Date | null): boolean {
-    if (state === "revoked" || state === "pending") return false;
-    // Checked here rather than trusted to a sweeper. A sweeper that has not run yet, or that
-    // failed, would otherwise leave an expired key verifying tokens indefinitely.
-    if (notAfter && notAfter.getTime() <= Date.now()) return false;
-    return true;
+    return isKeyUsable({ state, notAfter });
   }
 
   private async refresh(): Promise<void> {
@@ -271,19 +268,14 @@ export class KeyRegistryService implements OnModuleInit, OnModuleDestroy {
     // all, and at runtime a snapshot that stops following rotations. Unlike a database outage, a row
     // failing here is not transient (unwrapping is deterministic), so the snapshot is replaced without it
     // rather than kept: if that key was tampered with, it should stop being used, loudly.
+    //
+    // What makes a row trustworthy (its KEK, its algorithm, a public JWK bound to the wrapped private key
+    // and to the row's own kid) is decided in loadStoredKey, shared with the keys:decode CLI so the two
+    // cannot disagree about which keys are real.
     for (const row of rows) {
       if (!row.wrappedKey) continue;
-      // `kek_id` exists so a deployment can tell which rows it is able to unwrap. Checked rather than
-      // discovered by a failed unwrap, so the log names the actual cause.
-      if (row.kekId !== this.provider.id) {
-        this.logger.error(
-          `Key ${row.kid} (${row.purpose}) was wrapped by key-encrypting key "${row.kekId}", and this ` +
-            `process holds "${this.provider.id}", so the key is not loaded.`,
-        );
-        continue;
-      }
       try {
-        await this.loadRow(row, next);
+        this.add(await loadStoredKey(this.provider, row), row, next);
       } catch (err) {
         this.logger.error(
           `Could not load key ${row.kid} (${row.purpose}), so it is not in use: ` +
@@ -298,43 +290,26 @@ export class KeyRegistryService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  /** Unwrap one row into `next`. Throws when the row cannot be trusted, which skips that key only. */
-  private async loadRow(row: KeyRow, next: Snapshot): Promise<void> {
-    const material = await this.provider.unwrap(new Uint8Array(row.wrappedKey ?? []), {
-      purpose: row.purpose,
-      kid: row.kid,
-    });
-
-    if (row.purpose === "token_signing") {
-      if (!row.publicJwk) throw new Error("the signing key has no public JWK to verify with");
-      const publicJwk = row.publicJwk as JWK;
-      const privatePkcs8 = new TextDecoder().decode(material);
-      // The public half verifies tokens and is published in the JWKS, but it is stored in the clear,
-      // so it is only trusted once shown to belong to the private half the KEK protects. See
-      // publicJwkMatchesPrivateKey for what skipping this would allow.
-      if (!(await publicJwkMatchesPrivateKey(privatePkcs8, publicJwk))) {
-        throw new Error(
-          "its stored public JWK is not the public half of its wrapped private key, so the column " +
-            "may have been replaced; refusing to verify or publish with it",
-        );
-      }
-      next.signing.set(row.kid, {
-        kid: row.kid,
-        privateKey: await importSigningKey(privatePkcs8),
-        publicKey: await importVerificationKey(publicJwk),
-        publicJwk,
+  /** Put a key that loaded into `next`, with the lifecycle state the row carries. */
+  private add(key: LoadedKey, row: KeyRow, next: Snapshot): void {
+    if (key.purpose === "token_signing") {
+      next.signing.set(key.kid, {
+        kid: key.kid,
+        privateKey: key.privateKey,
+        publicKey: key.publicKey,
+        publicJwk: key.publicJwk,
         state: row.state,
         notAfter: row.notAfter,
       });
-      if (row.state === "active") next.activeSigningKid = row.kid;
+      if (row.state === "active") next.activeSigningKid = key.kid;
     } else {
-      next.encryption.set(row.kid, {
-        kid: row.kid,
-        secret: material,
+      next.encryption.set(key.kid, {
+        kid: key.kid,
+        secret: key.secret,
         state: row.state,
         notAfter: row.notAfter,
       });
-      if (row.state === "active") next.activeEncryptionKid = row.kid;
+      if (row.state === "active") next.activeEncryptionKid = key.kid;
     }
   }
 }

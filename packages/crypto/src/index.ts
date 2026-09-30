@@ -19,6 +19,15 @@ export {
 export { LocalKeyProvider, type KeyContext, type KeyProvider } from "./key-provider";
 
 export {
+  isKeyUsable,
+  loadStoredKey,
+  type LoadedEncryptionKey,
+  type LoadedKey,
+  type LoadedSigningKey,
+  type StoredKeyRow,
+} from "./key-loading";
+
+export {
   AUDIT_HASH_BYTES,
   GENESIS_HASH,
   canonicalAuditForm,

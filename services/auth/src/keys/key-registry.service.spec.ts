@@ -268,6 +268,18 @@ describe("KeyRegistryService", () => {
       registry.onModuleDestroy();
     });
 
+    // What the JWKS serves is built from verified parts, so nothing a database write adds to the
+    // stored object (here a stray member) reaches external verifiers.
+    it("publishes the JWK the loader built, not the stored object", async () => {
+      const signing = await signingRow("active");
+      signing.publicJwk = { ...(signing.publicJwk as object), note: "added by hand" };
+      const registry = await registryOver([signing, await encryptionRow("active")]);
+      const [published] = registry.jwks().keys;
+      expect(published).toMatchObject({ kid: signing.kid, alg: "ES256", use: "sig" });
+      expect(published).not.toHaveProperty("note");
+      registry.onModuleDestroy();
+    });
+
     it("skips a row wrapped by a key-encrypting key this process does not hold", async () => {
       const signing = await signingRow("active");
       const encryption = await encryptionRow("active");
