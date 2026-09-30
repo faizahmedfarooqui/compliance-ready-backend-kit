@@ -143,6 +143,20 @@ describe("loadConfig", () => {
     expect(() => loadConfig(shared)).toThrow(/must be different keys/);
   });
 
+  /**
+   * Different text, same key. The last of 43 base64url characters carries two padding bits, so KEK
+   * ("A" x 43) and this alias ("A" x 42 then "B") decode to identical bytes. A text comparison let the
+   * pair through, which is exactly the reuse the rule exists to refuse.
+   */
+  it("refuses a control-plane key that is only a different spelling of the KEK", () => {
+    const alias = `${KEK.slice(0, 42)}B`;
+    expect(alias).not.toBe(KEK);
+    expect(Buffer.from(alias, "base64url").equals(Buffer.from(KEK, "base64url"))).toBe(true);
+    expect(() => loadConfig(validEnv({ CONTROL_PLANE_API_KEY: alias }))).toThrow(
+      /must be different keys/,
+    );
+  });
+
   it("accepts the two keys when they differ", () => {
     const config = loadConfig(validEnv());
     expect(config.controlPlaneApiKey).toBe(CP_KEY);

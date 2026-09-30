@@ -269,7 +269,11 @@ const withInvariants = schema
   // an Authorization header on every provisioning call, where proxies may log it and CI stores it, while
   // the KEK unwraps every token key in config_keys. The same value in both would make one observed
   // provisioning request enough to mint tokens for any tenant.
-  .refine((c) => c.keyEncryptionKey !== c.controlPlaneApiKey, {
+  //
+  // Compared as DECODED BYTES, not as text. 43 base64url characters carry 258 bits for a 256-bit key,
+  // so the last character's two low bits are padding the decoder ignores, and four different strings
+  // decode to the same key: "AAA...A" and "AAA...B" are one KEK. A text comparison passes them.
+  .refine((c) => !sameKeyBytes(c.keyEncryptionKey, c.controlPlaneApiKey), {
     message:
       "KEY_ENCRYPTION_KEY and CONTROL_PLANE_API_KEY must be different keys. The control-plane key is " +
       "sent in request headers, so reusing it as the KEK would expose every wrapped token key to " +
@@ -278,6 +282,11 @@ const withInvariants = schema
   });
 
 export type AppConfig = z.infer<typeof withInvariants>;
+
+/** Whether two base64url keys decode to the same bytes, whatever their spelling. */
+function sameKeyBytes(a: string, b: string): boolean {
+  return Buffer.from(a, "base64url").equals(Buffer.from(b, "base64url"));
+}
 
 /**
  * Find the nearest `.env` walking up from `startDir`. A service is started from its own
