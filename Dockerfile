@@ -22,7 +22,12 @@
 # ---------------------------------------------------------------------------
 # builder
 # ---------------------------------------------------------------------------
-FROM node:24-bookworm-slim AS builder
+# The base is pinned by DIGEST, with the tag kept for readability, for the same reason every GitHub
+# Action here is pinned to a commit: a tag can be re-pointed, so the tag alone does not say what was
+# built. Pinned to the multi-arch index, so amd64 and arm64 builds each get their own matching image.
+# Dependabot's docker ecosystem proposes each new digest as a PR, which is how base-image security
+# updates arrive reviewed instead of silently at the next rebuild.
+FROM node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS builder
 
 WORKDIR /app
 
@@ -76,18 +81,25 @@ CMD ["pnpm", "db:migrate"]
 # safe because the builder already compiled the generated clients into dist; nothing is left to
 # generate.
 #
+# --legacy is REQUIRED too, since pnpm 10. Without it `pnpm deploy` refuses a workspace that does not
+# set inject-workspace-packages ("ERR_PNPM_DEPLOY_NONINJECTED_WORKSPACE"), and this one does not,
+# because injecting would change how every workspace package links during development. The pnpm 9 to
+# 11 upgrade in #45 made this step fail, and with no workflow building the image, the Dockerfile went
+# unbuildable for a month without anything noticing. `--legacy` is the deploy this image was built and
+# verified with before that upgrade, and CI now builds the image on every push so it cannot recur.
+#
 # What this tree must carry beyond dist/, and the reason the runtime stage copies rather than rebuilds:
 # ConnectionManager reads sql/tenant-schema.sql and sql/audit-immutability.sql at PROVISIONING time, via
 # path.resolve(__dirname, "..", "sql", ...). Those are runtime inputs, not build artefacts. Miss them
 # and the service starts, serves health checks, and then fails the first time a tenant is created.
 # ---------------------------------------------------------------------------
 FROM builder AS pruned
-RUN pnpm deploy --filter @compliance-kit/auth-service --prod --ignore-scripts /deploy
+RUN pnpm deploy --legacy --filter @compliance-kit/auth-service --prod --ignore-scripts /deploy
 
 # ---------------------------------------------------------------------------
 # runtime: the default target
 # ---------------------------------------------------------------------------
-FROM node:24-bookworm-slim AS runtime
+FROM node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS runtime
 
 # curl is here for the HEALTHCHECK below and is the only addition to the base image. Nothing else is
 # installed: no shell utilities, no build toolchain, no prisma CLI.
@@ -98,9 +110,13 @@ RUN apt-get update \
 ENV NODE_ENV=production
 WORKDIR /app
 
-# node:24 already carries an unprivileged `node` user (uid 1000). Own the files as that user and run as
-# it, so a compromise inside the container is not root inside the container.
-COPY --from=pruned --chown=node:node /deploy /app
+# node:24 already carries an unprivileged `node` user (uid 1000). Run as it, so a compromise inside the
+# container is not root inside the container, but leave the files OWNED BY ROOT: the process reads its
+# code and SQL and never writes them, and a file the process can write is one a compromised process can
+# rewrite. That includes packages/db/sql/*.sql, which provisioning reads to build every new tenant
+# database, immutability triggers included, so a writable copy would let one compromise weaken every
+# tenant created after it. This line used to pass --chown=node:node, which granted exactly that.
+COPY --from=pruned /deploy /app
 
 USER node
 EXPOSE 3011

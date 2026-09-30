@@ -93,3 +93,24 @@ updates:
       actions:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+
+  # The Dockerfile's base image, pinned to a digest for the same reason the actions are pinned to SHAs:
+  # a tag can be re-pointed, so the tag alone does not say what was built. Dependabot maintains digest
+  # pins, and this entry is what turns a new node:24-bookworm-slim (a Node patch, or Debian security
+  # fixes in the base) into a reviewable PR instead of a silent change at the next rebuild. Without it
+  # the pin would only ever age. The docker-compose images are local development only and are not
+  # tracked here.
+  #
+  # Review: the new digest must be what the tag resolves to now, one command:
+  #   docker buildx imagetools inspect node:24-bookworm-slim   (compare the index Digest)
+  # and the Container image job in ci.yml must pass, since it builds and boots the result.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 2
+    # A Node major (node:26) changes the runtime the kit targets, and .nvmrc says 24, so majors are not
+    # proposed here; moving Node is a decision, made in .nvmrc and the Dockerfile together.
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]

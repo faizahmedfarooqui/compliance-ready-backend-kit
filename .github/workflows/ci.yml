@@ -52,7 +52,14 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      # persist-credentials: false on every checkout. By default the job's GITHUB_TOKEN is left in
+      # .git/config for the rest of the job, readable by every later step, third-party actions and
+      # dependency install scripts included. No job here uses git credentials after checking out (the DDL
+      # drift check's `git diff` is local, and gitleaks and dependency review use the API token), so
+      # leaving it there would only widen what a compromised step could take.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -134,6 +141,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
@@ -329,3 +338,62 @@ jobs:
       - name: Service log
         if: always()
         run: cat /tmp/auth.log || true
+
+  # The container image, built and booted on every push. Nothing did this before, and the Dockerfile went
+  # unbuildable for a month without anyone noticing: the pnpm 9 to 11 upgrade (#45) made `pnpm deploy`
+  # refuse a workspace without injected packages, and since no workflow built the image the first sign would
+  # have been a failed deploy. This job is what makes "the kit ships a container image" a checked claim.
+  image:
+    name: Container image
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the runtime and migrator targets
+        run: |
+          set -euo pipefail
+          docker build --target runtime -t crbk-auth:ci .
+          docker build --target migrator -t crbk-auth:ci-migrator .
+
+      # Boots with unreachable dependencies on purpose: the service is built to start degraded and say so,
+      # so health must answer without Postgres or Redis. Throwaway keys, generated here and never printed.
+      - name: The runtime image boots, passes its own HEALTHCHECK, and cannot rewrite its code or SQL
+        run: |
+          set -euo pipefail
+          key() { openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n'; }
+          docker run -d --name crbk-ci -p 13011:3011 \
+            -e NODE_ENV=production \
+            -e MASTER_DATABASE_URL=postgres://nobody@127.0.0.1:1/master \
+            -e TENANT_CLUSTER_URL=postgres://nobody@127.0.0.1:1 \
+            -e REDIS_URL=redis://127.0.0.1:1 \
+            -e JWT_ISSUER=ci -e JWT_AUDIENCE=ci \
+            -e KEY_ENCRYPTION_KEY="$(key)" -e CONTROL_PLANE_API_KEY="$(key)" \
+            crbk-auth:ci
+          for i in $(seq 1 60); do curl -fsS http://localhost:13011/api/health > /dev/null 2>&1 && break; sleep 1; done
+          version=$(curl -fsS http://localhost:13011/api/health | jq -r '.data.version')
+          expected=$(jq -r '.version' services/auth/package.json)
+          [ "$version" = "$expected" ] || { echo "::error::image reports version $version, package.json says $expected"; docker logs crbk-ci; exit 1; }
+          for i in $(seq 1 60); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' crbk-ci)
+            [ "$status" != "starting" ] && break
+            sleep 1
+          done
+          [ "$status" = "healthy" ] || { echo "::error::HEALTHCHECK reports $status"; docker logs crbk-ci; exit 1; }
+          # Root-owned and read-only to the runtime user: provisioning reads these to build every new tenant
+          # database, immutability triggers included, so a writable copy would let one compromise weaken
+          # every tenant created after it.
+          docker exec crbk-ci sh -c '
+            set -e
+            sql=$(dirname "$(find /app/node_modules -path "*compliance-kit/db/sql/audit-immutability.sql" | head -1)")
+            [ -r "$sql/tenant-schema.sql" ] && [ -r "$sql/audit-immutability.sql" ]
+            if touch "$sql/probe" 2> /dev/null; then echo "::error::the runtime user can write $sql"; exit 1; fi
+            if touch /app/dist/probe 2> /dev/null; then echo "::error::the runtime user can write /app/dist"; exit 1; fi
+            echo "runtime user $(id -un) can read the provisioning SQL and write neither it nor dist/"
+          '
+
+      - name: Image log
+        if: always()
+        run: docker logs crbk-ci 2>&1 | tail -50 || true
