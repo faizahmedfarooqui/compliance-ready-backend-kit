@@ -60,10 +60,10 @@ Every command, and the runbooks for the things you will actually need to do.
 
 | Command | Does |
 | --- | --- |
-| `pnpm test` | 304 unit tests, no database needed |
+| `pnpm test` | 333 unit tests, no database needed |
 | `pnpm test:coverage` | With coverage thresholds |
 | `pnpm test:watch` | The same suite, on file changes |
-| `pnpm smoke` | 92 end-to-end checks against a running service |
+| `pnpm smoke` | 100 end-to-end checks against a running service |
 | `pnpm smoke:slowloris` | Raw-socket check that the request timeout is real |
 | `pnpm verify:claims` | Every suite above, reported per compliance control with its citation |
 | `pnpm verify:coverage` | Static: fails if a row marked Implemented has no registered evidence |

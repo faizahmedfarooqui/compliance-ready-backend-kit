@@ -206,7 +206,9 @@ const EVIDENCE = {
     // Asserts a 408 at roughly the configured timeout rather than accepting any quick response,
     // which is the difference between proving the timeout and proving the server is reachable.
     { suite: "slowloris", match: "server answered 408" },
-    // The other half of the row's name, which had no evidence at all: the body size limit.
+    // The other half of the row's name, which had no evidence at all: the body size limit, tested at
+    // the boundary in both directions so an off-by-one in either would show.
+    { suite: "smoke", match: "a body of exactly BODY_LIMIT_BYTES gets past the limit" },
     { suite: "smoke", match: "a body one byte over BODY_LIMIT_BYTES is refused" },
     { suite: "smoke", match: "an oversized body reports PAYLOAD_TOO_LARGE" },
   ],

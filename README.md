@@ -126,7 +126,7 @@ Then, in another shell:
 
 ```bash
 export CONTROL_PLANE_API_KEY='<the value from your .env>'
-pnpm smoke                    # 92 end-to-end checks, including isolation and token forgery
+pnpm smoke                    # 100 end-to-end checks, including isolation and token forgery
 pnpm verify:claims            # the same evidence, reported per compliance control
 ```
 
@@ -137,7 +137,7 @@ like a broken install.
 `pnpm verify:claims` is the one to run if you are evaluating rather than developing. It executes the
 smoke suite, both audit probes, the slowloris probe, the unit tests and `pnpm audit`, then reports
 each result grouped by the control it supports, with that control's HIPAA, PCI-DSS and SOC 2 citation
-alongside: 58 items across the nine Implemented rows, plus one on a Partial row. "304 tests pass" is
+alongside: 59 items across the nine Implemented rows, plus one on a Partial row. "333 tests pass" is
 a fact about this repository; that output answers whether a given row in
 [COMPLIANCE.md](./COMPLIANCE.md) is actually true.
 
@@ -454,7 +454,7 @@ packages/
 services/
   auth/      NestJS + Fastify: tenancy, auth, RBAC, audit, rate limiting, control plane
 scripts/
-  smoke-test.sh       92 end-to-end checks
+  smoke-test.sh       100 end-to-end checks
   slowloris-probe.mjs raw-socket request-timeout probe
   clean-test-tenants.sh, stop-auth.sh
 docs/            the documentation set; start at docs/README.md
@@ -497,8 +497,8 @@ a request, until its database is fully built.
 ## Status
 
 v0.2 is **auth + RBAC + a key registry + rate limiting + an authenticated control plane + an
-append-only audit log**, on the database-per-tenant foundation. It builds, typechecks, passes 304 unit
-tests and a 99-check end-to-end smoke test against a live Postgres and Redis, run in CI on every push.
+append-only audit log**, on the database-per-tenant foundation. It builds, typechecks, passes 333 unit
+tests and a 100-check end-to-end smoke test against a live Postgres and Redis, run in CI on every push.
 `pnpm verify:claims` reproduces the evidence behind every control the mapping marks Implemented, and
 CI fails if one of those rows has no evidence registered.
 

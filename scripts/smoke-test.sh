@@ -498,13 +498,18 @@ expect_status 400 "$status" "unparseable body gives 400, distinct from 422"
   || fail "unexpected code for malformed body: $(cat /tmp/smoke-body)"
 
 # The body limit, which COMPLIANCE.md's "Request-level DoS limits (timeouts, body size)" row claims and
-# nothing exercised until now. One byte over BODY_LIMIT_BYTES must be refused before it is parsed or
-# validated, as a problem body like every other error. Read from the same variable the server reads,
-# with the same default, so a deployment that raised the limit is tested against its own number.
+# nothing exercised until now. Tested AT the boundary, in raw bytes, because the limit is enforced on the
+# raw body before any parsing: exactly BODY_LIMIT_BYTES must get past it (and then fail as malformed
+# JSON, a 400), and one byte more must be refused with a 413 problem body. Read from the same variable the
+# server reads, with the same default, so a deployment that raised the limit is tested against its own
+# number. `x` repeated is not JSON, which is the point: the only thing that can answer 413 is the limit.
 body_limit="${BODY_LIMIT_BYTES:-1048576}"
-status=$(node -e 'process.stdout.write(JSON.stringify({ slug: "x", name: "x".repeat(Number(process.argv[1]) + 1) }))' "$body_limit" \
-  | curl -sS -o /tmp/smoke-body -w '%{http_code}' -X POST "$BASE_URL/tenants" \
-      -H 'content-type: application/json' --data-binary @-)
+body_of() { node -e 'process.stdout.write("x".repeat(Number(process.argv[1])))' "$1"; }
+status=$(body_of "$body_limit" | curl -sS -o /tmp/smoke-body -w '%{http_code}' -X POST "$BASE_URL/tenants" \
+  -H 'content-type: application/json' --data-binary @-)
+expect_status 400 "$status" "a body of exactly BODY_LIMIT_BYTES gets past the limit"
+status=$(body_of "$((body_limit + 1))" | curl -sS -o /tmp/smoke-body -w '%{http_code}' -X POST "$BASE_URL/tenants" \
+  -H 'content-type: application/json' --data-binary @-)
 expect_status 413 "$status" "a body one byte over BODY_LIMIT_BYTES is refused"
 [ "$(jq -r '.code' /tmp/smoke-body)" = "PAYLOAD_TOO_LARGE" ] \
   && pass "an oversized body reports PAYLOAD_TOO_LARGE" \

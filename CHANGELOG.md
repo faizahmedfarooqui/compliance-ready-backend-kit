@@ -45,7 +45,7 @@ These change what a client or an operator observes. Read them before upgrading.
 
 ### Verification
 
-304 unit tests, a 99-check end-to-end suite, and `pnpm verify:claims` reporting 58 evidence items across the
+333 unit tests, a 100-check end-to-end suite, and `pnpm verify:claims` reporting 59 evidence items across the
 nine Implemented rows.
 
 ## v0.2.0
