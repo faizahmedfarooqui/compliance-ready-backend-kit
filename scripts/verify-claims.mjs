@@ -198,6 +198,8 @@ const EVIDENCE = {
     // coming back unreadable is enough to refuse, and a check on only one would pass half of this.
     { suite: "unit", match: "refuses the attempt if the ACCOUNT counter cannot be read" },
     { suite: "unit", match: "refuses the attempt if the ADDRESS counter cannot be read" },
+    // Keyed on the full IPv6 address, one host holding a /64 draws a fresh budget per request.
+    { suite: "unit", match: "count every address in one IPv6 /64 against the same budget" },
   ],
 
   "Request-level DoS limits (timeouts, body size)": [

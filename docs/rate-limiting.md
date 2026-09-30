@@ -107,6 +107,17 @@ Fastify walks the list from the right against its trusted set.
 
 Both directions have smoke tests.
 
+### IPv6 clients are counted by /64
+
+Every per-address limit (the client-wide budget, the per-route budgets, and the login throttle's address
+counter) keys an IPv6 client on its **/64 prefix**, not its full address. One host is routinely handed a
+whole /64, so the last 64 bits cost an attacker nothing to rotate: keyed on the full address, each request
+could arrive from a fresh address with a fresh budget, and the address counter meant to stop password
+spraying would never fill. An IPv4-mapped address (`::ffff:203.0.113.7`) counts as its IPv4 form. This
+only arises behind a proxy with `TRUST_PROXY` set, since the service itself listens on IPv4, and that is
+the production shape. The trade is that clients sharing one /64 share a budget. Audit events still record
+the full address.
+
 ## Login throttling is a different control
 
 Counted on **failure only** and **cleared on success**, per account and per source address. Ten failures

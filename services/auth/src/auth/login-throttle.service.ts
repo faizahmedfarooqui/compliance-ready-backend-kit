@@ -3,6 +3,7 @@ import { Inject, Injectable, Logger } from "@nestjs/common";
 import { TooManyRequestsError } from "@compliance-kit/common";
 import type { AppConfig } from "@compliance-kit/config";
 import { CONFIG } from "../core/tokens";
+import { rateLimitIdentity } from "../ratelimit/client-address";
 import { RateLimitStore } from "../ratelimit/rate-limit.store";
 
 /**
@@ -159,6 +160,8 @@ export class LoginThrottleService {
   }
 
   private addressKey(ip: string): string {
-    return `login:addr:${ip}`;
+    // The /64 for IPv6. Keyed on the full address, one host holding a /64 could spray passwords across
+    // accounts from a fresh address each time and never reach this counter's limit.
+    return `login:addr:${rateLimitIdentity(ip)}`;
   }
 }

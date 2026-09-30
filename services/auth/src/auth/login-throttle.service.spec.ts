@@ -155,6 +155,30 @@ describe("LoginThrottleService", () => {
     });
   });
 
+  describe("address keys", () => {
+    const addressKeyFor = async (ip: string): Promise<string | undefined> => {
+      const { stub, consume } = store();
+      await new LoginThrottleService(stub, CONFIG).recordFailure(TENANT, EMAIL, ip);
+      return consume.mock.calls.map((c) => String(c[0])).find((k) => k.startsWith("login:addr:"));
+    };
+
+    // One host is routinely handed a whole /64. Were each address its own bucket, spraying passwords
+    // across accounts from a fresh address per attempt would never reach the address limit.
+    it("count every address in one IPv6 /64 against the same budget", async () => {
+      const first = await addressKeyFor("2001:db8:1:2::1");
+      const rotated = await addressKeyFor("2001:db8:1:2:ffff:ffff:ffff:fffe");
+      expect(first).toBeDefined();
+      expect(rotated).toBe(first);
+    });
+
+    it("keep different /64s, and different IPv4 addresses, apart", async () => {
+      expect(await addressKeyFor("2001:db8:1:2::1")).not.toBe(
+        await addressKeyFor("2001:db8:1:3::1"),
+      );
+      expect(await addressKeyFor("203.0.113.7")).not.toBe(await addressKeyFor("203.0.113.8"));
+    });
+  });
+
   describe("account keys", () => {
     it("do not contain the email address", async () => {
       const { stub, consume } = store();
