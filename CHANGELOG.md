@@ -10,6 +10,44 @@ change behaviour; each entry says so where it does.
 here as added is a capability that file marks Implemented, and `pnpm verify:claims` will reproduce the
 evidence for it. Nothing is listed here that cannot be checked that way.
 
+## Unreleased
+
+### Changed
+
+These change what a client or an operator observes. Read them before upgrading.
+
+- **The login throttle fails closed when Redis is unreachable.** If either of its counters cannot be read,
+  the attempt is refused with a 429 and `Retry-After: 1`, and recorded as `auth.login.throttled` with
+  `reason: throttle_unavailable`. Logging in is unavailable for the length of a Redis outage; every other
+  route and every issued token keeps working. It used to fail open, so an outage switched brute-force
+  throttling off entirely, which contradicted the rule docs/rate-limiting.md stated. `RATE_LIMIT_FAIL_OPEN`
+  still governs the request tiers, and only them.
+- **A request carrying two `Authorization` headers is refused with 401**, on data routes and on the control
+  plane. Node keeps only the first of two, so such a request used to be judged on whichever came first.
+- **IPv6 clients are rate limited per /64**, in the client-wide, per-route and login-address budgets, so
+  clients sharing one /64 share a budget. IPv4-mapped addresses count as IPv4. Only reachable behind a
+  proxy with `TRUST_PROXY` set.
+- **Every response that does not set its own `Cache-Control` is `no-store`**, and all responses carry
+  `X-Content-Type-Options: nosniff`. The JWKS keeps its cacheable `public, max-age=300` header.
+- **The service refuses to start when `KEY_ENCRYPTION_KEY` equals `CONTROL_PLANE_API_KEY`.**
+
+### Fixed
+
+- **The key registry no longer trusts a stored public key on its own.** Each signing key's published JWK is
+  checked against its KEK-wrapped private key, and a mismatch keeps the key out of use, so write access to
+  `config_keys` is no longer enough to substitute a verification key. Keys also load one row at a time,
+  so a single row that cannot be unwrapped no longer leaves the deployment with no keys at all, and a
+  row wrapped by a key-encrypting key this process does not hold is skipped by name.
+- **The OpenAPI document states the real version** when the service is started as the image starts it. It
+  said 0.1.0.
+- **The body-size limit has evidence.** The "Request-level DoS limits (timeouts, body size)" row had none
+  for its second half; the smoke suite now proves a 413 one byte over `BODY_LIMIT_BYTES`.
+
+### Verification
+
+304 unit tests, a 99-check end-to-end suite, and `pnpm verify:claims` reporting 58 evidence items across the
+nine Implemented rows.
+
 ## v0.2.0
 
 The first tagged release. v0.1 existed as a milestone and was never tagged, so the versions in
