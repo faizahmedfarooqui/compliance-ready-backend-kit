@@ -4,6 +4,10 @@
 # often evaluated on a machine that already runs another Postgres or Redis, and a port
 # collision on first `docker compose up` is a bad first impression. Override with
 # POSTGRES_PORT / REDIS_PORT if these clash too.
+#
+# Bound to 127.0.0.1, not every interface. A bare "55432:5432" publishes on 0.0.0.0, which
+# puts a Postgres with a well-known development password, and a Redis with none, on
+# whatever network the laptop has joined. Nothing outside this machine needs to reach them.
 services:
   postgres:
     image: postgres:16-alpine
@@ -14,7 +18,7 @@ services:
       # runtime on this same cluster by the ConnectionManager.
       POSTGRES_DB: master
     ports:
-      - "${POSTGRES_PORT:-55432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -26,7 +30,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "${REDIS_PORT:-56379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-56379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
