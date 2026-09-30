@@ -11,10 +11,10 @@
  * and the assertions are quoted back in the words they were written in.
  *
  * IT RE-IMPLEMENTS NOTHING, and that is the central design rule. Every assertion already lives in
- * scripts/smoke-test.sh, scripts/slowloris-probe.mjs, the two audit probes, or the unit suite. This
- * script runs those and attributes their output. A copy of an assertion here would be a second
- * source of truth that can drift from the real one while still printing PASS, which is precisely
- * the failure mode a compliance document cannot afford.
+ * scripts/smoke-test.sh, scripts/slowloris-probe.mjs, the two audit probes, the provisioning probe,
+ * or the unit suite. This script runs those and attributes their output. A copy of an assertion
+ * here would be a second source of truth that can drift from the real one while still printing
+ * PASS, which is precisely the failure mode a compliance document cannot afford.
  *
  * Attribution therefore works by matching a substring against a PASSING line of a suite's output.
  * That makes the registry below deliberately brittle: rename an assertion and the match stops
@@ -44,7 +44,7 @@ const COMPLIANCE_PATH = join(REPO_ROOT, "COMPLIANCE.md");
 /**
  * The suites that hold the evidence.
  *
- * `passMarker` is how each one spells a passing line: the bash suite and both probes print `PASS`,
+ * `passMarker` is how each one spells a passing line: the bash suite and every probe print `PASS`,
  * vitest prints a check mark. A match counts only when the line carries that marker, so a substring
  * appearing in a FAIL line, or in a comment echoed to stdout, cannot be mistaken for evidence.
  */
@@ -79,6 +79,13 @@ const SUITES = {
     passMarker: "PASS",
     needs: "Postgres",
   },
+  provisioning: {
+    label: "pnpm provisioning:probe",
+    command: "pnpm",
+    args: ["provisioning:probe"],
+    passMarker: "PASS",
+    needs: "Postgres. It creates and drops its own resume-* tenants",
+  },
   unit: {
     label: "pnpm vitest run",
     command: "pnpm",
@@ -108,7 +115,15 @@ const SUITES = {
  * Every suite referenced by the registry must appear here or it never runs; validateRegistry() below
  * enforces that rather than trusting it.
  */
-const RUN_ORDER = ["smoke", "slowloris", "immutability", "contention", "unit", "audit"];
+const RUN_ORDER = [
+  "smoke",
+  "slowloris",
+  "immutability",
+  "contention",
+  "provisioning",
+  "unit",
+  "audit",
+];
 
 /**
  * Control -> the evidence that supports it.
@@ -126,6 +141,16 @@ const EVIDENCE = {
     { suite: "smoke", match: "GET /users with a token minted for a different tenant" },
     { suite: "smoke", match: "rejected with CROSS_TENANT_TOKEN" },
     { suite: "smoke", match: "GET /users with an unknown tenant slug" },
+    // A retry of an interrupted provisioning must never adopt a database built for someone else: that
+    // would put one tenant into another's users and audit log through the provisioning path alone.
+    {
+      suite: "provisioning",
+      match: "a retry refuses a database marked as built for a different tenant",
+    },
+    {
+      suite: "provisioning",
+      match: "a retry refuses an unmarked database that already holds the tenant schema",
+    },
   ],
 
   "RBAC / access control": [

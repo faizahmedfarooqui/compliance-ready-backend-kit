@@ -1,7 +1,10 @@
 export {
   ConnectionManager,
+  TenantDatabaseConflictError,
+  tenantDatabaseName,
   type ManagerOptions,
   type MasterDb,
+  type ProvisionedTenant,
   type ProvisionTenantInput,
   type TenantDb,
 } from "./connection-manager";

@@ -137,9 +137,9 @@ file. Without the export, provisioning returns 401 and about a dozen checks fail
 like a broken install.
 
 `pnpm verify:claims` is the one to run if you are evaluating rather than developing. It executes the
-smoke suite, both audit probes, the slowloris probe, the unit tests and `pnpm audit`, then reports
+smoke suite, both audit probes, the provisioning probe, the slowloris probe, the unit tests and `pnpm audit`, then reports
 each result grouped by the control it supports, with that control's HIPAA, PCI-DSS and SOC 2 citation
-alongside: 59 items across the nine Implemented rows, plus one on a Partial row. "344 tests pass" is
+alongside: 61 items across the nine Implemented rows, plus one on a Partial row. "347 tests pass" is
 a fact about this repository; that output answers whether a given row in
 [COMPLIANCE.md](./COMPLIANCE.md) is actually true.
 
@@ -494,12 +494,14 @@ Applying the schema and seeding the RBAC catalogue happen in a **single transact
 Postgres makes DDL transactional, so a tenant database is never left with tables but no
 roles. `CREATE DATABASE` cannot join a transaction, so provisioning uses the `status` column
 as its completion marker: a tenant stays `provisioning`, and therefore cannot be resolved for
-a request, until its database is fully built.
+a request, until its database is fully built. A provisioning that fails partway is finished by
+repeating the request, and a retry refuses, rather than adopts, a database with the tenant's name that
+was built for someone else.
 
 ## Status
 
 v0.2 is **auth + RBAC + a key registry + rate limiting + an authenticated control plane + an
-append-only audit log**, on the database-per-tenant foundation. It builds, typechecks, passes 344 unit
+append-only audit log**, on the database-per-tenant foundation. It builds, typechecks, passes 347 unit
 tests and a 100-check end-to-end smoke test against a live Postgres and Redis, run in CI on every push.
 `pnpm verify:claims` reproduces the evidence behind every control the mapping marks Implemented, and
 CI fails if one of those rows has no evidence registered.

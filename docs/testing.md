@@ -6,10 +6,11 @@ What is proven, how, and the deliberate decision not to unit test the database l
 
 | Command | What it is | Needs |
 | --- | --- | --- |
-| `pnpm test` | 344 unit tests across 20 files | nothing |
+| `pnpm test` | 347 unit tests across 20 files | nothing |
 | `pnpm smoke` | 100 end-to-end checks | a running service, Postgres, Redis |
 | `pnpm smoke:slowloris` | raw-socket request-timeout probe | a running service |
 | `pnpm audit:contention` | concurrent-append fork probe | Postgres |
+| `pnpm provisioning:probe` | interrupted-provisioning and foreign-database probe | Postgres |
 | `pnpm audit:immutability --master \| --tenant <slug\|uuid>` | append-only enforcement probe | Postgres |
 | `pnpm audit:verify --master \| --tenant <slug\|uuid>` | walks a chain and reports the first break | Postgres |
 | `pnpm verify:claims` | all of the above, reported per compliance control | everything |
@@ -23,10 +24,10 @@ tested for the reasons below.
 ## Reading the results by control instead of by suite
 
 The table above is organised by mechanism, which is the wrong axis for the question most readers of this
-repository actually have. "344 tests pass" is a fact about the project's diligence; it is not an answer to
+repository actually have. "347 tests pass" is a fact about the project's diligence; it is not an answer to
 "is multi-tenant isolation real". `pnpm verify:claims` runs the same suites and reports every result
 grouped under the control it supports, with that control's HIPAA, PCI-DSS and SOC 2 citation beside it:
-59 items across the nine rows COMPLIANCE.md marks Implemented, plus one on a Partial row.
+61 items across the nine rows COMPLIANCE.md marks Implemented, plus one on a Partial row.
 
 It re-implements nothing. Each entry in its registry is a substring matched against a **passing line** of
 a suite's real output, so the assertions stay where they were written. A copy of an assertion inside that
@@ -197,6 +198,17 @@ something else entirely.
 **`pnpm audit:immutability`** attempts the mutations the log must refuse. Every attempt is wrapped in a
 transaction that is rolled back, so if a trigger has been dropped the probe *reports* it instead of
 demonstrating it by erasing the log.
+
+**`pnpm provisioning:probe`** needs failures, which the smoke test cannot cause: it has no way to stop a
+provisioning halfway. So the probe writes each state an interrupted run leaves (a registry row with no
+database, an empty database, a built database whose status update was lost) and requires a retry to
+finish it without building anything twice. It also stages the two databases a retry must refuse, one
+marked for another tenant and one holding the tenant schema with no marker, and requires each to be left
+exactly as it was, down to a sentinel row written into it first: a refusal that had already changed the
+database would have done the damage it exists to prevent.
+
+Each of those checks was confirmed to fail with its guard removed. Accepting any marker, building over an
+existing schema, ignoring the name and ignoring the lock each turned the matching check red.
 
 ## Known gaps
 

@@ -106,6 +106,21 @@ header. Every route except `POST /api/tenants` needs one.
 A tenant with that slug is already registered. Slugs are unique across the deployment and
 become part of the tenant's database name, so they cannot be reused.
 
+Not returned for a provisioning that failed partway: repeating that request, with the same slug
+and the same name, resumes it and answers 201. It is returned when the name differs, because
+that is a different request that wants the same slug.
+
+### `tenant-provisioning-in-progress`
+
+`TENANT_PROVISIONING_IN_PROGRESS` · **409**
+
+Another request is provisioning that slug right now. Unlike `tenant-already-exists` this one is
+worth retrying: once the other request finishes, the tenant is either active, and a retry gets
+`tenant-already-exists`, or its provisioning stopped partway, and a retry resumes it.
+
+The smoke suite cannot produce it, since it sends one request at a time. `pnpm provisioning:probe`
+asserts it against real Postgres by holding the provisioning lock itself.
+
 ### `validation-failed`
 
 `VALIDATION_FAILED` · **422**

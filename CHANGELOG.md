@@ -48,6 +48,14 @@ These change what a client or an operator observes. Read them before upgrading.
   could accept a token the service refused.
 - **The OpenAPI document states the real version** when the service is started as the image starts it. It
   said 0.1.0.
+- **A provisioning that failed partway can be finished by repeating the request.** The same slug and name
+  resume it and answer 201. It used to leave the tenant in `provisioning` for good: every retry was a 409,
+  and the slug stayed unusable until someone edited the registry by hand. A request that arrives while
+  another is provisioning the same slug now gets `409 TENANT_PROVISIONING_IN_PROGRESS`, and
+  `tenant.provisioned` carries `resumed: "true"` when it finished an earlier request's work. A retry never
+  adopts a database it did not build: one marked for another tenant, or holding the tenant schema with no
+  marker, is refused and left untouched, since it may hold another tenant's users and audit log.
+  docs/operations.md has the recovery runbook.
 - **The body-size limit has evidence.** The "Request-level DoS limits (timeouts, body size)" row had none
   for its second half; the smoke suite now tests the boundary in raw bytes: exactly `BODY_LIMIT_BYTES`
   passes the limit and one byte more gets 413.
@@ -72,8 +80,8 @@ These change what a client or an operator observes. Read them before upgrading.
 
 ### Verification
 
-344 unit tests, a 100-check end-to-end suite, and `pnpm verify:claims` reporting 59 evidence items across the
-nine Implemented rows.
+347 unit tests, a 100-check end-to-end suite, the provisioning probe's 12 checks, and `pnpm verify:claims`
+reporting 61 evidence items across the nine Implemented rows.
 
 ## v0.2.0
 
