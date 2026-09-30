@@ -4,6 +4,7 @@ import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fa
 import { Logger, ValidationPipe } from "@nestjs/common";
 import { loadConfig, loadLocalDotenv } from "@compliance-kit/config";
 import { AppModule } from "./app.module";
+import { registerDefaultResponseHeaders } from "./common/default-response-headers";
 import { validationExceptionFactory } from "./common/validation-exception.factory";
 import { setupOpenApi } from "./docs/openapi";
 
@@ -66,6 +67,10 @@ async function bootstrap(): Promise<void> {
       trustProxy: config.trustProxy,
     }),
   );
+
+  // Before any route is registered (Nest adds its routes at listen, the docs UI below), so every
+  // route and the not-found handler inherit it.
+  registerDefaultResponseHeaders(app.getHttpAdapter().getInstance());
 
   // RFC 8615 reserves /.well-known/ at the root of an origin, so the JWKS route is excluded from
   // the prefix. A well-known URI nested under /api is not a well-known URI.

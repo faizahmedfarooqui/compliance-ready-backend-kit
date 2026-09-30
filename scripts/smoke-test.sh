@@ -234,6 +234,15 @@ ADMIN_TOKEN=$(login "$TENANT_A" "$ADMIN_A" "$ADMIN_PASSWORD")
   && pass "admin login returned a token" \
   || fail "admin login did not return a token: $(cat /tmp/smoke-body)"
 
+# A response carrying a bearer token must not be stored by any cache, the browser's included. The
+# headers are the login's own: `login` goes through `req`, which writes them before returning.
+grep -iq '^cache-control: *no-store' /tmp/smoke-headers \
+  && pass "the login response is marked Cache-Control: no-store" \
+  || fail "login response cache-control: $(grep -i '^cache-control' /tmp/smoke-headers || echo none)"
+grep -iq '^x-content-type-options: *nosniff' /tmp/smoke-headers \
+  && pass "the login response is marked X-Content-Type-Options: nosniff" \
+  || fail "login response has no X-Content-Type-Options: nosniff"
+
 [ "$(printf '%s' "$ADMIN_TOKEN" | awk -F. '{print NF}')" = "5" ] \
   && pass "token is a 5-segment compact JWE (not a bare 3-segment JWS)" \
   || fail "token is not a compact JWE: $ADMIN_TOKEN"
@@ -488,6 +497,19 @@ expect_status 400 "$status" "unparseable body gives 400, distinct from 422"
   && pass "unparseable body reports MALFORMED_REQUEST" \
   || fail "unexpected code for malformed body: $(cat /tmp/smoke-body)"
 
+# The body limit, which COMPLIANCE.md's "Request-level DoS limits (timeouts, body size)" row claims and
+# nothing exercised until now. One byte over BODY_LIMIT_BYTES must be refused before it is parsed or
+# validated, as a problem body like every other error. Read from the same variable the server reads,
+# with the same default, so a deployment that raised the limit is tested against its own number.
+body_limit="${BODY_LIMIT_BYTES:-1048576}"
+status=$(node -e 'process.stdout.write(JSON.stringify({ slug: "x", name: "x".repeat(Number(process.argv[1]) + 1) }))' "$body_limit" \
+  | curl -sS -o /tmp/smoke-body -w '%{http_code}' -X POST "$BASE_URL/tenants" \
+      -H 'content-type: application/json' --data-binary @-)
+expect_status 413 "$status" "a body one byte over BODY_LIMIT_BYTES is refused"
+[ "$(jq -r '.code' /tmp/smoke-body)" = "PAYLOAD_TOO_LARGE" ] \
+  && pass "an oversized body reports PAYLOAD_TOO_LARGE" \
+  || fail "unexpected code for an oversized body: $(cat /tmp/smoke-body)"
+
 # All five RFC 9457 members plus our two extensions, on an arbitrary error.
 status=$(req GET /users "" -H "x-tenant-id: definitely-no-such-tenant" \
   -H "authorization: Bearer $ADMIN_TOKEN")
@@ -574,6 +596,14 @@ expect_status 200 "$spec_status" "GET /docs/openapi.json"
 jq -e '.openapi and .info.title and (.paths | length > 0)' /tmp/smoke-spec >/dev/null 2>&1 \
   && pass "a well-formed OpenAPI document with at least one path" \
   || fail "not a usable OpenAPI document: $(head -c 200 /tmp/smoke-spec)"
+
+# The document's version is a claim like any other. It used to come from npm_package_version, which
+# only a package-manager script sets, and fell back to a hardcoded "0.1.0" everywhere else, including
+# the container. Compared against the same file step 0 compares /api/health with.
+spec_version=$(jq -r '.info.version' /tmp/smoke-spec)
+[ "$spec_version" = "$local_version" ] \
+  && pass "the OpenAPI document's info.version matches services/auth/package.json ($local_version)" \
+  || fail "OpenAPI info.version is $spec_version, package.json says $local_version"
 
 # THE assertion. Handlers return a bare resource and an interceptor adds { success, data, meta }, and
 # the generator cannot see interceptors. Any 2xx documented as the bare resource is a lie, so every

@@ -2,6 +2,7 @@ import { Logger } from "@nestjs/common";
 import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import type { AppConfig } from "@compliance-kit/config";
+import { PACKAGE_INFO } from "../common/package-info";
 import {
   AccessTokenSchema,
   FieldProblemSchema,
@@ -71,7 +72,8 @@ export function setupOpenApi(app: NestFastifyApplication, config: AppConfig): vo
           "Error catalogue: [problems.md](https://github.com/faizahmedfarooqui/compliance-ready-backend-kit/blob/main/problems.md).",
         ].join("\n"),
       )
-      .setVersion(process.env.npm_package_version ?? "0.1.0")
+      // From package.json, as /api/health reads it. See PACKAGE_INFO for why not npm_package_version.
+      .setVersion(PACKAGE_INFO.version)
       .setLicense(
         "MIT",
         "https://github.com/faizahmedfarooqui/compliance-ready-backend-kit/blob/main/LICENSE",
