@@ -22,7 +22,7 @@ triggers:
 license: MIT
 metadata:
   author: faizahmedfarooqui
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Dependabot triage
@@ -147,6 +147,30 @@ Fixing an advisory with a transitive dependency:
 `fail-on-severity`, not deleting the step. A dev-only path is a reason to say so in the commit
 message, not a reason to stop failing: the gate is the evidence the control exists.
 
+### The gate cannot see a repository advisory
+
+`pnpm audit` reads GitHub's global advisory database, and a maintainer's own repository advisory can
+stay out of it indefinitely. On 2026-09-30, seven advisories affecting this repo's request path had
+never reached it (five Fastify, one Nest, one `@fastify/static`, five of them high), so the gate had
+reported none of them, and `main` had run a Fastify affected by four high ones for twelve days. So on
+every pass, read the request-path packages' repository advisories directly:
+
+```bash
+for repo in fastify/fastify fastify/fast-uri fastify/fastify-static fastify/fast-json-stringify \
+            fastify/ajv-compiler fastify/middie fastify/fastify-cors fastify/fastify-formbody \
+            delvedor/find-my-way pillarjs/path-to-regexp nestjs/nest nestjs/swagger panva/jose \
+            ranisalt/node-argon2 redis/ioredis prisma/prisma brianc/node-postgres \
+            colinhacks/zod typestack/class-validator; do
+  gh api "repos/$repo/security-advisories?state=published&per_page=100" \
+    --jq ".[] | \"$repo \(.ghsa_id) \(.severity) \(.published_at[0:10]) \(.summary)\""
+done
+```
+
+For each hit, compare its patched version with what the **lockfile** resolves (the grep below), not
+with the `package.json` range, then check reachability against the code before writing a word about
+exposure. Keep the list in step with the runtime dependencies: a new package in the request path
+belongs in it.
+
 ### An override takes that version out of Dependabot's hands
 
 This is the trap that closes behind you a week later. An override range is not a floor that drifts
@@ -170,6 +194,17 @@ grep -oE "^  '?<pkg>@[0-9]+\.[0-9]+\.[0-9]+" pnpm-lock.yaml | tr -d " '" | sort 
 # One line per major you deliberately override. Two majors on purpose (js-yaml 4 and 5) is
 # fine; two of the same major is the duplicate you are looking for.
 ```
+
+**Set each floor to the version resolution produced, not to the advisory's minimum.** A floor below
+the resolved version lets the next lockfile rewrite move backwards inside the range, and nothing
+checks for a downgrade: on 2026-09-16 a grouped Dependabot update took `fast-uri` from 4.1.5 back to
+4.1.4 under a `^4.1.3` floor, and 4.1.4 was vulnerable two weeks later.
+
+**Then check the override is not holding a consumer back.** When the package that depends on an
+overridden one starts declaring a version at or above the floor by itself, the override has become a
+ceiling on it. Compare each dependent's declared range with what resolves:
+`js-yaml@5: ^5.2.2` kept `@nestjs/swagger` on a vulnerable 5.3.0 while swagger itself declared the
+patched 5.4.1, and `find-my-way@9: ^9.7.0` kept the Nest adapter on 9.7.0 while it declared 9.9.0.
 
 Worth checking the whole override block whenever a Dependabot PR touches a package that appears in
 it, since the same silence applies to every entry.
