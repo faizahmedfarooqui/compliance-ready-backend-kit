@@ -37,9 +37,27 @@ describe("rateLimitIdentity", () => {
     expect(rateLimitIdentity("2001:db8::1")).toBe("2001:db8:0:0::/64");
   });
 
-  it("folds an IPv4-mapped IPv6 address back to IPv4, so one client is one bucket", () => {
-    expect(rateLimitIdentity("::ffff:203.0.113.7")).toBe("203.0.113.7");
-    expect(rateLimitIdentity("::FFFF:203.0.113.7")).toBe("203.0.113.7");
+  // Every spelling of one IPv4-mapped address. Only the first used to be recognised, and the rest
+  // collapsed into the single 0:0:0:0::/64 bucket, so all IPv4 clients of such a proxy shared one budget.
+  it.each([
+    ["dotted, compressed", "::ffff:203.0.113.7"],
+    ["dotted, upper case", "::FFFF:203.0.113.7"],
+    ["hexadecimal, compressed", "::ffff:cb00:7107"],
+    ["hexadecimal, upper case", "::FFFF:CB00:7107"],
+    ["dotted, uncompressed", "0:0:0:0:0:ffff:203.0.113.7"],
+    ["hexadecimal, uncompressed", "0:0:0:0:0:ffff:cb00:7107"],
+    ["hexadecimal, leading zeros", "0000:0000:0000:0000:0000:ffff:cb00:7107"],
+    ["partially compressed", "0:0::ffff:cb00:7107"],
+  ])("folds an IPv4-mapped address written %s back to IPv4", (_label, address) => {
+    expect(rateLimitIdentity(address)).toBe("203.0.113.7");
+  });
+
+  it("keeps two different IPv4-mapped clients apart", () => {
+    expect(rateLimitIdentity("::ffff:cb00:7107")).not.toBe(rateLimitIdentity("::ffff:cb00:7108"));
+  });
+
+  it("does not fold an address that only looks mapped", () => {
+    expect(rateLimitIdentity("::fffe:cb00:7107")).toBe("0:0:0:0::/64");
   });
 
   it("returns anything that is not an IP address unchanged", () => {

@@ -24,32 +24,44 @@ export function rateLimitIdentity(address: string): string {
   if (isIPv4(address)) return address;
   if (!isIPv6(address)) return address;
 
-  const lower = address.toLowerCase().split("%")[0];
-  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(lower);
-  if (mapped && isIPv4(mapped[1])) return mapped[1];
+  const groups = expandIPv6(address.split("%")[0]);
 
-  return `${firstFourHextets(lower)}::/64`;
+  // IPv4-mapped (::ffff:0:0/96), recognised by value rather than by spelling. `::ffff:203.0.113.7`,
+  // `::ffff:cb00:7107` and `0:0:0:0:0:ffff:203.0.113.7` are one address; matching only the first
+  // form used to put every IPv4 client of a proxy that writes the others into the single
+  // `0:0:0:0::/64` bucket, so the busiest one throttled all of them.
+  if (groups.slice(0, 5).every((group) => group === 0) && groups[5] === 0xffff) {
+    return [groups[6] >> 8, groups[6] & 0xff, groups[7] >> 8, groups[7] & 0xff].join(".");
+  }
+
+  return `${groups
+    .slice(0, 4)
+    .map((group) => group.toString(16))
+    .join(":")}::/64`;
 }
 
-/** The first 64 bits of an IPv6 address, in canonical lowercase hextets without leading zeros. */
-function firstFourHextets(address: string): string {
+/**
+ * The eight 16-bit groups of an IPv6 address, from any spelling Node accepts: compressed or not, any
+ * case, leading zeros, and an embedded dotted quad (which supplies the last two groups). Only called
+ * after `isIPv6` has validated the address, so the structure is known to be sound.
+ */
+function expandIPv6(address: string): number[] {
   const [head, tail] = address.includes("::") ? address.split("::") : [address, undefined];
-  const hextets = (part: string | undefined): string[] => {
+  const parse = (part: string | undefined): number[] => {
     if (!part) return [];
-    const groups = part.split(":");
-    // A trailing dotted quad occupies the last two hextets. It can never reach the first four, so its
-    // value does not matter, only that it is counted as two groups.
-    if (groups[groups.length - 1].includes(".")) groups.splice(-1, 1, "0", "0");
-    return groups;
+    const out: number[] = [];
+    for (const group of part.split(":")) {
+      if (group.includes(".")) {
+        const [a, b, c, d] = group.split(".").map(Number);
+        out.push((a << 8) | b, (c << 8) | d);
+      } else {
+        out.push(parseInt(group, 16));
+      }
+    }
+    return out;
   };
-  const front = hextets(head);
-  const back = hextets(tail);
-  const full =
-    tail === undefined
-      ? front
-      : [...front, ...new Array<string>(8 - front.length - back.length).fill("0"), ...back];
-  return full
-    .slice(0, 4)
-    .map((group) => parseInt(group, 16).toString(16))
-    .join(":");
+  const front = parse(head);
+  if (tail === undefined) return front;
+  const back = parse(tail);
+  return [...front, ...new Array<number>(8 - front.length - back.length).fill(0), ...back];
 }
