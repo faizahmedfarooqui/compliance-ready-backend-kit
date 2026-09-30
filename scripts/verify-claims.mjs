@@ -191,6 +191,10 @@ const EVIDENCE = {
     { suite: "unit", match: "services/auth/src/ratelimit/rate-limit.store.spec.ts" },
     { suite: "unit", match: "services/auth/src/auth/login-throttle.service.spec.ts" },
     { suite: "unit", match: "says nothing about which counter tripped" },
+    // The auth tier fails closed while Redis is unreachable. Both counters, because either one
+    // coming back unreadable is enough to refuse, and a check on only one would pass half of this.
+    { suite: "unit", match: "refuses the attempt if the ACCOUNT counter cannot be read" },
+    { suite: "unit", match: "refuses the attempt if the ADDRESS counter cannot be read" },
   ],
 
   "Request-level DoS limits (timeouts, body size)": [

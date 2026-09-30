@@ -291,10 +291,12 @@ Two settings deserve a decision rather than a default:
   shares one bucket, so the first busy client throttles everyone. Set `true` without a trusted proxy in
   front, and any caller sends `X-Forwarded-For` to get a fresh bucket per request. It defaults to
   `false` because that failure is loud and the other is silent.
-- **`RATE_LIMIT_FAIL_OPEN`** decides what happens when Redis is unreachable. Open by default, because
-  closed turns a Redis blip into a total API outage including login, which is a bigger incident than
+- **`RATE_LIMIT_FAIL_OPEN`** decides what the request-tier limits do when Redis is unreachable. Open by
+  default, because closed turns a Redis blip into a total API outage, which is a bigger incident than
   the one being prevented. Every occurrence is logged at error level and the response carries
-  `X-RateLimit-Degraded: true`, so the degradation is visible rather than quiet.
+  `X-RateLimit-Degraded: true`, so the degradation is visible rather than quiet. **The login throttle
+  is not governed by it and always fails closed:** an attempt it cannot count is refused with a 429,
+  because unlimited password guessing during an outage is the thing the throttle exists to prevent.
 
 ### The control plane needs its own credential
 

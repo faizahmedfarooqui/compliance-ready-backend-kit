@@ -6,6 +6,23 @@ import { CONFIG } from "../core/tokens";
 import { RateLimitStore } from "../ratelimit/rate-limit.store";
 
 /**
+ * Raised when the throttle cannot read its counters, so it cannot tell whether an attempt is within
+ * its limits.
+ *
+ * A subclass of TooManyRequestsError so the response is the same 429 problem body with a short
+ * Retry-After; a caller cannot and need not tell the two apart. It exists so the audit trail can: an
+ * attempt refused because Redis was unreachable is a different event from one refused because
+ * somebody was guessing, and an assessor reading the log will want to know which it was.
+ */
+export class LoginThrottleUnavailableError extends TooManyRequestsError {
+  constructor() {
+    // Short, because the outage is the reason and it may already be over. A wait derived from the
+    // window would punish the caller for our failure, as in RateLimitStore.consume.
+    super(1_000);
+  }
+}
+
+/**
  * Slows password guessing, which the generic per-client rate limit does not.
  *
  * The generic limiter bounds how many requests ONE address may make. That is a throughput control and
@@ -34,6 +51,8 @@ import { RateLimitStore } from "../ratelimit/rate-limit.store";
  * at least 30 minutes, and a deployment that needs that reading can set LOGIN_THROTTLE_WINDOW_MS to
  * 1800000. What the kit will not do is provide an unauthenticated way to disable a named user
  * indefinitely.
+ *
+ * FAILS CLOSED WHEN THE COUNTERS CANNOT BE READ, unlike the request tiers. See `assertWithinLimits`.
  */
 @Injectable()
 export class LoginThrottleService {
@@ -64,6 +83,20 @@ export class LoginThrottleService {
         this.config.loginThrottleWindowMs,
       ),
     ]);
+
+    // Auth tiers fail CLOSED. `peek` answers `allowed: true` when Redis is unreachable, which is right
+    // for the request tiers, where RATE_LIMIT_FAIL_OPEN decides, and wrong here: an attempt nobody
+    // counted is exactly the unlimited guessing that NIST SP 800-63B-4 section 3.2.2 requires a
+    // verifier to prevent, and the throttle was the only thing preventing it. So an unreadable counter
+    // refuses the attempt. Login is unavailable for the length of the outage; every other route, and
+    // every token already issued, keeps working.
+    if (account.degraded || address.degraded) {
+      this.logger.error(
+        `Login throttle could not read its counters for tenant ${tenantId} from ${ip}, ` +
+          `REFUSING the attempt: the login throttle fails closed whatever RATE_LIMIT_FAIL_OPEN says`,
+      );
+      throw new LoginThrottleUnavailableError();
+    }
 
     // The longer of the two waits, so a caller told to come back in N seconds is not still throttled
     // by the other counter when they do.

@@ -107,7 +107,7 @@ kills live tokens at rotation; absent means the overlap never ends.
 | `RATE_LIMIT_DEFAULT_WINDOW_MS` | `60000` | |
 | `LOGIN_THROTTLE_LIMIT` | `10` | Failed logins per account and per source address before both are throttled |
 | `LOGIN_THROTTLE_WINDOW_MS` | `900000` | 15 minutes |
-| `RATE_LIMIT_FAIL_OPEN` | `true` | Serve (true) or reject (false) when Redis is unreachable |
+| `RATE_LIMIT_FAIL_OPEN` | `true` | Request tiers: serve (true) or reject (false) when Redis is unreachable. The login throttle always fails closed |
 
 **`TRUST_PROXY` is the one setting where both values are wrong in some deployment**, so it has to be a
 deliberate choice. Left `false` behind a load balancer, every request appears to come from the

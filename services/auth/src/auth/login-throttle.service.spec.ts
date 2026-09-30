@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { TooManyRequestsError } from "@compliance-kit/common";
 import type { AppConfig } from "@compliance-kit/config";
 import type { RateLimitStore, RateLimitResult } from "../ratelimit/rate-limit.store";
-import { LoginThrottleService } from "./login-throttle.service";
+import { LoginThrottleService, LoginThrottleUnavailableError } from "./login-throttle.service";
 
 /**
  * The behaviours here are the ones that are easy to get subtly wrong and impossible to notice: a
@@ -92,6 +92,40 @@ describe("LoginThrottleService", () => {
     await expect(throttle.assertWithinLimits(TENANT, EMAIL, IP)).rejects.toThrow(
       /^Too many requests\. Retry later\.$/,
     );
+  });
+
+  /**
+   * An unreadable counter comes back from the store as ALLOWED, flagged degraded, because that is the
+   * right answer for the request tiers. These pin the opposite answer for the auth tier: were the
+   * `degraded` check removed, every one of them would fail, since the scripted result is `allowed`.
+   */
+  describe("when Redis is unreachable", () => {
+    const unreadable = result({ allowed: true, degraded: true });
+
+    it("refuses the attempt if the ACCOUNT counter cannot be read", async () => {
+      const { stub } = store({ "login:acct:": unreadable });
+      const throttle = new LoginThrottleService(stub, CONFIG);
+      await expect(throttle.assertWithinLimits(TENANT, EMAIL, IP)).rejects.toBeInstanceOf(
+        LoginThrottleUnavailableError,
+      );
+    });
+
+    it("refuses the attempt if the ADDRESS counter cannot be read", async () => {
+      const { stub } = store({ "login:addr:": unreadable });
+      const throttle = new LoginThrottleService(stub, CONFIG);
+      await expect(throttle.assertWithinLimits(TENANT, EMAIL, IP)).rejects.toBeInstanceOf(
+        LoginThrottleUnavailableError,
+      );
+    });
+
+    it("answers as an ordinary 429 with a short wait, indistinguishable to the caller", async () => {
+      const { stub } = store({ "login:acct:": unreadable, "login:addr:": unreadable });
+      const throttle = new LoginThrottleService(stub, CONFIG);
+      const refusal = await throttle.assertWithinLimits(TENANT, EMAIL, IP).catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(TooManyRequestsError);
+      expect((refusal as TooManyRequestsError).message).toBe("Too many requests. Retry later.");
+      expect((refusal as TooManyRequestsError).retryAfterSeconds).toBe(1);
+    });
   });
 
   describe("counting", () => {

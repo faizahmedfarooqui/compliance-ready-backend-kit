@@ -110,7 +110,7 @@ The underlying evidence, per row:
 | Access-token confidentiality | `pnpm smoke` steps 5, 6, 13 |
 | Input validation | `pnpm smoke` step 15 |
 | Append-only audit logging | `pnpm audit:immutability`, `pnpm audit:verify`, `pnpm audit:contention`, `pnpm smoke` step 18 |
-| Rate limiting and login throttling | `pnpm smoke` step 1, `pnpm test` (`rate-limit.store.spec.ts`) |
+| Rate limiting and login throttling | `pnpm smoke` step 1, `pnpm test` (`rate-limit.store.spec.ts`, `login-throttle.service.spec.ts`, including the fail-closed cases) |
 | Request-level DoS limits | `pnpm smoke:slowloris` |
 | Control-plane authorization | `pnpm smoke` step 1 |
 
