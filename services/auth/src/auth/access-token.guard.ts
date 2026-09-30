@@ -6,10 +6,13 @@ import {
   type AccessTokenClaims,
   type Tenant,
 } from "@compliance-kit/common";
+import {
+  singleAuthorizationHeader,
+  type AuthorizationHeaderSource,
+} from "../common/authorization-header";
 import { TokenService } from "./token.service";
 
-interface AuthenticatedRequest {
-  headers: Record<string, string | string[] | undefined>;
+interface AuthenticatedRequest extends AuthorizationHeaderSource {
   tenant?: Tenant;
   user?: AccessTokenClaims;
 }
@@ -58,10 +61,11 @@ export class AccessTokenGuard implements CanActivate {
 
 /** Extract a bearer token, rejecting anything that is not exactly one well-formed header. */
 function bearerToken(req: AuthenticatedRequest): string {
-  const header = req.headers.authorization;
-  // A repeated Authorization header arrives as an array. Rather than pick one, refuse:
-  // which one a proxy forwards is not something to leave to chance.
-  if (typeof header !== "string") throw new InvalidAccessTokenError();
+  // Refuses a repeated Authorization header as well as a missing one. Node does not deliver a repeat
+  // as an array, it silently keeps the first, so that has to be detected from the raw header list;
+  // see singleAuthorizationHeader. Which of two tokens a proxy forwards is not left to chance.
+  const header = singleAuthorizationHeader(req);
+  if (header === undefined) throw new InvalidAccessTokenError();
 
   const [scheme, value, ...rest] = header.split(" ");
   if (rest.length > 0 || scheme?.toLowerCase() !== "bearer" || !value) {

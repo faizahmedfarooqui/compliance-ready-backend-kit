@@ -171,6 +171,13 @@ status=$(req POST /tenants "{\"slug\":\"nope-$RUN_ID\",\"name\":\"Malformed\"}" 
   -H "authorization: $CP_KEY")
 expect_status 401 "$status" "POST /tenants with the key but no Bearer scheme"
 
+# Two Authorization headers with the REAL key first. Node keeps the first line and discards the
+# rest, so without an explicit count this is accepted on the strength of a header that a proxy
+# reading the last one would never have seen. The "never created" check below would also catch it.
+status=$(req POST /tenants "{\"slug\":\"nope-$RUN_ID\",\"name\":\"Two Keys\"}" \
+  -H "authorization: Bearer $CP_KEY" -H "authorization: Bearer wrong0000000000000000000000000000000000000")
+expect_status 401 "$status" "POST /tenants with two Authorization headers, the valid key first"
+
 # Rate limiting runs BEFORE authentication, so a rejected call still spends budget. That ordering is
 # deliberate: the limiter is a global guard and the credential check is a route guard, and bounding
 # floods from callers with no credential at all is the entire purpose. The headers prove it happened,
@@ -372,6 +379,11 @@ status=$(req GET /users "" -H "x-tenant-id: $TENANT_A" -H "authorization: $ADMIN
 expect_status 401 "$status" "token with no Bearer scheme"
 status=$(req GET /users "" -H "x-tenant-id: $TENANT_A")
 expect_status 401 "$status" "no Authorization header at all"
+# The valid token FIRST, garbage second. Node would hand the guard only the first, so this passes
+# unless the guard counts the raw header lines, which is what makes it a test of that count.
+status=$(req GET /users "" -H "x-tenant-id: $TENANT_A" \
+  -H "authorization: Bearer $ADMIN_TOKEN" -H "authorization: Bearer not-a-token")
+expect_status 401 "$status" "two Authorization headers, the valid token first"
 
 # Tampering needs no keys: flip a byte inside a segment and re-encode. Done on bytes rather than on
 # base64url text because a segment's trailing character carries only a couple of significant bits and

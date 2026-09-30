@@ -134,6 +134,9 @@ const EVIDENCE = {
     { suite: "smoke", match: "registered user's token carries no permissions" },
     { suite: "smoke", match: "permissions claim carries the seeded grants" },
     { suite: "unit", match: "services/auth/src/rbac/permissions.guard.spec.ts" },
+    // The credential an access decision rests on must be unambiguous. Node keeps only the first of
+    // two Authorization lines, so this passes only because the guard counts the raw header list.
+    { suite: "smoke", match: "two Authorization headers, the valid token first" },
   ],
 
   "Password storage (Argon2id KDF)": [
@@ -207,6 +210,7 @@ const EVIDENCE = {
     { suite: "smoke", match: "POST /tenants with NO credential" },
     { suite: "smoke", match: "POST /tenants with a WRONG credential" },
     { suite: "smoke", match: "POST /tenants with the key but no Bearer scheme" },
+    { suite: "smoke", match: "POST /tenants with two Authorization headers, the valid key first" },
     { suite: "smoke", match: "rejection carries the CONTROL_PLANE_UNAUTHORIZED code" },
     { suite: "smoke", match: "the rejected tenant was never created" },
     { suite: "unit", match: "services/auth/src/tenants/control-plane.guard.spec.ts" },
