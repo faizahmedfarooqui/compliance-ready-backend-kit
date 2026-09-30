@@ -263,9 +263,30 @@ const withInvariants = schema
       "CONNECTIONS_CHECKING_INTERVAL_MS must be less than REQUEST_TIMEOUT_MS, or the sweep " +
       "granularity rather than the timeout decides when a slow request is cut off",
     path: ["connectionsCheckingIntervalMs"],
+  })
+  // The two 256-bit secrets look identical, share a generation command, and are easy to paste twice.
+  // They are nothing alike in exposure: the control-plane key is a bearer credential that travels in
+  // an Authorization header on every provisioning call, where proxies may log it and CI stores it, while
+  // the KEK unwraps every token key in config_keys. The same value in both would make one observed
+  // provisioning request enough to mint tokens for any tenant.
+  //
+  // Compared as DECODED BYTES, not as text. 43 base64url characters carry 258 bits for a 256-bit key,
+  // so the last character's two low bits are padding the decoder ignores, and four different strings
+  // decode to the same key: "AAA...A" and "AAA...B" are one KEK. A text comparison passes them.
+  .refine((c) => !sameKeyBytes(c.keyEncryptionKey, c.controlPlaneApiKey), {
+    message:
+      "KEY_ENCRYPTION_KEY and CONTROL_PLANE_API_KEY must be different keys. The control-plane key is " +
+      "sent in request headers, so reusing it as the KEK would expose every wrapped token key to " +
+      "anyone who sees one provisioning request. Generate each separately.",
+    path: ["controlPlaneApiKey"],
   });
 
 export type AppConfig = z.infer<typeof withInvariants>;
+
+/** Whether two base64url keys decode to the same bytes, whatever their spelling. */
+function sameKeyBytes(a: string, b: string): boolean {
+  return Buffer.from(a, "base64url").equals(Buffer.from(b, "base64url"));
+}
 
 /**
  * Find the nearest `.env` walking up from `startDir`. A service is started from its own

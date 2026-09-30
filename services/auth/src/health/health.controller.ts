@@ -1,7 +1,6 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { Controller, Get } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
+import { PACKAGE_INFO } from "../common/package-info";
 import { NoRateLimit } from "../ratelimit/rate-limit.decorator";
 
 /**
@@ -31,23 +30,6 @@ interface HealthReport {
 }
 
 /**
- * Read once at module load. Resolves from both `dist/` and `src/`, since `..` from either is
- * the service root.
- */
-const PACKAGE = readPackage();
-
-function readPackage(): { name: string; version: string } {
-  try {
-    const raw = readFileSync(path.resolve(__dirname, "..", "..", "package.json"), "utf8");
-    const parsed = JSON.parse(raw) as { name?: string; version?: string };
-    return { name: parsed.name ?? "unknown", version: parsed.version ?? "unknown" };
-  } catch {
-    // Never let a health endpoint be the reason a service fails to boot.
-    return { name: "unknown", version: "unknown" };
-  }
-}
-
-/**
  * Exempt from rate limiting, which is the case @NoRateLimit exists for. A load balancer or
  * orchestrator polls this on a fixed interval from a small number of addresses, so under load it is
  * exactly the caller most likely to exhaust a per-address budget. A 429 here reads as "unhealthy",
@@ -74,8 +56,8 @@ export class HealthController {
   check(): HealthReport {
     return {
       status: "ok",
-      service: PACKAGE.name,
-      version: PACKAGE.version,
+      service: PACKAGE_INFO.name,
+      version: PACKAGE_INFO.version,
       startedAt: STARTED_AT.toISOString(),
       uptimeSeconds: Math.floor((Date.now() - STARTED_AT.getTime()) / 1000),
     };

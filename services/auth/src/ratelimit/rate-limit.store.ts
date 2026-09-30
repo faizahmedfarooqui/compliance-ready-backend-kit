@@ -172,10 +172,13 @@ export class RateLimitStore {
   /**
    * How full the window is, without counting this look as an event.
    *
-   * Fails OPEN regardless of the configured policy, and that is not an inconsistency. The only caller
-   * is login throttling, where the failure count is consulted before the password is checked; a Redis
-   * outage that made this reject would lock every user out of the service entirely. The password check
-   * itself is unaffected, so an outage costs the throttle, not the authentication.
+   * Reports, and never decides. On a Redis error it answers `allowed: true` with `degraded: true`,
+   * whatever the configured policy, because what an unreadable window should mean is the caller's call.
+   * The only caller, the login throttle, treats `degraded` as a refusal: auth tiers fail closed, so an
+   * attempt it cannot count is refused (see LoginThrottleService.assertWithinLimits). An earlier version
+   * of this comment said an outage "costs the throttle, not the authentication", which was the behaviour
+   * then and contradicted the documented rule; the store is unchanged, the caller is what changed.
+   * Answering rather than throwing keeps that decision in one visible place.
    */
   async peek(key: string, limit: number, windowMs: number): Promise<RateLimitResult> {
     try {

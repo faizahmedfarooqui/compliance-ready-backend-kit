@@ -9,6 +9,7 @@ import {
   importSigningKey,
   importVerificationKey,
   newKid,
+  publicJwkMatchesPrivateKey,
   toJwks,
 } from "./key-material";
 
@@ -115,5 +116,29 @@ describe("toJwks", () => {
     const serialised = JSON.stringify(toJwks([key.publicJwk]));
     expect(serialised).not.toContain("PRIVATE KEY");
     expect(serialised).not.toContain('"d"');
+  });
+
+  describe("publicJwkMatchesPrivateKey", () => {
+    it("accepts the public half that was generated with the private key", async () => {
+      const key = await generateSigningKey();
+      await expect(publicJwkMatchesPrivateKey(key.privatePkcs8, key.publicJwk)).resolves.toBe(true);
+    });
+
+    // The substitution this exists to catch: a public JWK from ANOTHER key pair, carrying this key's
+    // kid, alg and use, so every field a naive check would look at still agrees.
+    it("rejects another key pair's public half, even wearing this key's kid", async () => {
+      const key = await generateSigningKey();
+      const other = await generateSigningKey();
+      const swapped = { ...other.publicJwk, kid: key.kid, alg: key.publicJwk.alg, use: "sig" };
+      await expect(publicJwkMatchesPrivateKey(key.privatePkcs8, swapped)).resolves.toBe(false);
+    });
+
+    it("rejects a public half with one coordinate changed", async () => {
+      const key = await generateSigningKey();
+      const other = await generateSigningKey();
+      await expect(
+        publicJwkMatchesPrivateKey(key.privatePkcs8, { ...key.publicJwk, y: other.publicJwk.y }),
+      ).resolves.toBe(false);
+    });
   });
 });

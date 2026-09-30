@@ -171,6 +171,13 @@ status=$(req POST /tenants "{\"slug\":\"nope-$RUN_ID\",\"name\":\"Malformed\"}" 
   -H "authorization: $CP_KEY")
 expect_status 401 "$status" "POST /tenants with the key but no Bearer scheme"
 
+# Two Authorization headers with the REAL key first. Node keeps the first line and discards the
+# rest, so without an explicit count this is accepted on the strength of a header that a proxy
+# reading the last one would never have seen. The "never created" check below would also catch it.
+status=$(req POST /tenants "{\"slug\":\"nope-$RUN_ID\",\"name\":\"Two Keys\"}" \
+  -H "authorization: Bearer $CP_KEY" -H "authorization: Bearer wrong0000000000000000000000000000000000000")
+expect_status 401 "$status" "POST /tenants with two Authorization headers, the valid key first"
+
 # Rate limiting runs BEFORE authentication, so a rejected call still spends budget. That ordering is
 # deliberate: the limiter is a global guard and the credential check is a route guard, and bounding
 # floods from callers with no credential at all is the entire purpose. The headers prove it happened,
@@ -226,6 +233,15 @@ ADMIN_TOKEN=$(login "$TENANT_A" "$ADMIN_A" "$ADMIN_PASSWORD")
 [ -n "$ADMIN_TOKEN" ] && [ "$ADMIN_TOKEN" != "null" ] \
   && pass "admin login returned a token" \
   || fail "admin login did not return a token: $(cat /tmp/smoke-body)"
+
+# A response carrying a bearer token must not be stored by any cache, the browser's included. The
+# headers are the login's own: `login` goes through `req`, which writes them before returning.
+grep -iq '^cache-control: *no-store' /tmp/smoke-headers \
+  && pass "the login response is marked Cache-Control: no-store" \
+  || fail "login response cache-control: $(grep -i '^cache-control' /tmp/smoke-headers || echo none)"
+grep -iq '^x-content-type-options: *nosniff' /tmp/smoke-headers \
+  && pass "the login response is marked X-Content-Type-Options: nosniff" \
+  || fail "login response has no X-Content-Type-Options: nosniff"
 
 [ "$(printf '%s' "$ADMIN_TOKEN" | awk -F. '{print NF}')" = "5" ] \
   && pass "token is a 5-segment compact JWE (not a bare 3-segment JWS)" \
@@ -372,6 +388,11 @@ status=$(req GET /users "" -H "x-tenant-id: $TENANT_A" -H "authorization: $ADMIN
 expect_status 401 "$status" "token with no Bearer scheme"
 status=$(req GET /users "" -H "x-tenant-id: $TENANT_A")
 expect_status 401 "$status" "no Authorization header at all"
+# The valid token FIRST, garbage second. Node would hand the guard only the first, so this passes
+# unless the guard counts the raw header lines, which is what makes it a test of that count.
+status=$(req GET /users "" -H "x-tenant-id: $TENANT_A" \
+  -H "authorization: Bearer $ADMIN_TOKEN" -H "authorization: Bearer not-a-token")
+expect_status 401 "$status" "two Authorization headers, the valid token first"
 
 # Tampering needs no keys: flip a byte inside a segment and re-encode. Done on bytes rather than on
 # base64url text because a segment's trailing character carries only a couple of significant bits and
@@ -476,6 +497,24 @@ expect_status 400 "$status" "unparseable body gives 400, distinct from 422"
   && pass "unparseable body reports MALFORMED_REQUEST" \
   || fail "unexpected code for malformed body: $(cat /tmp/smoke-body)"
 
+# The body limit, which COMPLIANCE.md's "Request-level DoS limits (timeouts, body size)" row claims and
+# nothing exercised until now. Tested AT the boundary, in raw bytes, because the limit is enforced on the
+# raw body before any parsing: exactly BODY_LIMIT_BYTES must get past it (and then fail as malformed
+# JSON, a 400), and one byte more must be refused with a 413 problem body. Read from the same variable the
+# server reads, with the same default, so a deployment that raised the limit is tested against its own
+# number. `x` repeated is not JSON, which is the point: the only thing that can answer 413 is the limit.
+body_limit="${BODY_LIMIT_BYTES:-1048576}"
+body_of() { node -e 'process.stdout.write("x".repeat(Number(process.argv[1])))' "$1"; }
+status=$(body_of "$body_limit" | curl -sS -o /tmp/smoke-body -w '%{http_code}' -X POST "$BASE_URL/tenants" \
+  -H 'content-type: application/json' --data-binary @-)
+expect_status 400 "$status" "a body of exactly BODY_LIMIT_BYTES gets past the limit"
+status=$(body_of "$((body_limit + 1))" | curl -sS -o /tmp/smoke-body -w '%{http_code}' -X POST "$BASE_URL/tenants" \
+  -H 'content-type: application/json' --data-binary @-)
+expect_status 413 "$status" "a body one byte over BODY_LIMIT_BYTES is refused"
+[ "$(jq -r '.code' /tmp/smoke-body)" = "PAYLOAD_TOO_LARGE" ] \
+  && pass "an oversized body reports PAYLOAD_TOO_LARGE" \
+  || fail "unexpected code for an oversized body: $(cat /tmp/smoke-body)"
+
 # All five RFC 9457 members plus our two extensions, on an arbitrary error.
 status=$(req GET /users "" -H "x-tenant-id: definitely-no-such-tenant" \
   -H "authorization: Bearer $ADMIN_TOKEN")
@@ -562,6 +601,14 @@ expect_status 200 "$spec_status" "GET /docs/openapi.json"
 jq -e '.openapi and .info.title and (.paths | length > 0)' /tmp/smoke-spec >/dev/null 2>&1 \
   && pass "a well-formed OpenAPI document with at least one path" \
   || fail "not a usable OpenAPI document: $(head -c 200 /tmp/smoke-spec)"
+
+# The document's version is a claim like any other. It used to come from npm_package_version, which
+# only a package-manager script sets, and fell back to a hardcoded "0.1.0" everywhere else, including
+# the container. Compared against the same file step 0 compares /api/health with.
+spec_version=$(jq -r '.info.version' /tmp/smoke-spec)
+[ "$spec_version" = "$local_version" ] \
+  && pass "the OpenAPI document's info.version matches services/auth/package.json ($local_version)" \
+  || fail "OpenAPI info.version is $spec_version, package.json says $local_version"
 
 # THE assertion. Handlers return a bare resource and an interceptor adds { success, data, meta }, and
 # the generator cannot see interceptors. Any 2xx documented as the bare resource is a lie, so every

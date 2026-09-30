@@ -3,6 +3,7 @@ import { CanActivate, ExecutionContext, Inject, Injectable, Logger } from "@nest
 import type { FastifyRequest } from "fastify";
 import { ControlPlaneUnauthorizedError } from "@compliance-kit/common";
 import type { AppConfig } from "@compliance-kit/config";
+import { singleAuthorizationHeader } from "../common/authorization-header";
 import { CONFIG } from "../core/tokens";
 
 /**
@@ -29,7 +30,7 @@ export class ControlPlaneGuard implements CanActivate {
 
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<FastifyRequest>();
-    const presented = bearer(request.headers.authorization);
+    const presented = bearer(singleAuthorizationHeader(request));
 
     // One error for a missing key and a wrong one. Distinguishing them tells a prober whether the
     // route is protected at all, and whether their header format was accepted, which is two free bits
@@ -76,12 +77,14 @@ export class ControlPlaneGuard implements CanActivate {
  * The scheme name is matched case-insensitively because RFC 9110 §11.1 defines it as a case-
  * insensitive token, so a client sending "bearer" is correct and must not be rejected for it.
  *
- * An array-valued header is refused rather than joined. Fastify hands back an array when a header
- * appears twice, and picking one of them would let a caller send a rejected key alongside an accepted
- * one and have the pair treated as valid depending on which element was read first.
+ * A repeated header is refused rather than resolved. It does not arrive as an array: Node keeps the
+ * first Authorization line and drops the rest, so `singleAuthorizationHeader` counts the raw header
+ * list and hands this `undefined` for two. Otherwise a caller could send an accepted key alongside a
+ * rejected one and have the pair treated as valid depending on which of them was read, which is
+ * exactly what happened before, silently, because the array this function used to check for never came.
  */
-function bearer(header: string | string[] | undefined): string | undefined {
-  if (typeof header !== "string") return undefined;
+function bearer(header: string | undefined): string | undefined {
+  if (header === undefined) return undefined;
   const match = /^bearer\s+(\S+)$/i.exec(header.trim());
   return match?.[1];
 }

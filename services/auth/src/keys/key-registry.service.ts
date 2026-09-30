@@ -8,12 +8,13 @@ import {
 import { ConnectionManager, masterClient } from "@compliance-kit/db";
 import {
   LocalKeyProvider,
-  importSigningKey,
-  importVerificationKey,
+  isKeyUsable,
+  loadStoredKey,
   toJwks,
   type EncryptionKeyResolver,
   type Jwks,
   type KeyProvider,
+  type LoadedKey,
   type CryptoKey,
   type JWK,
   type SigningKeyResolver,
@@ -76,6 +77,18 @@ interface LoadedEncryptionKey {
   kid: string;
   secret: Uint8Array;
   state: masterClient.$Enums.KeyState;
+  notAfter: Date | null;
+}
+
+/** The columns of a `config_keys` row that loading reads. */
+interface KeyRow {
+  kid: string;
+  purpose: masterClient.$Enums.KeyPurpose;
+  algorithm: masterClient.$Enums.KeyAlgorithm;
+  state: masterClient.$Enums.KeyState;
+  wrappedKey: Uint8Array | null;
+  kekId: string;
+  publicJwk: unknown;
   notAfter: Date | null;
 }
 
@@ -218,64 +231,19 @@ export class KeyRegistryService implements OnModuleInit, OnModuleDestroy {
     return this.inFlight;
   }
 
-  /** True when a key may still be used, honouring `not_after` at the point of use. */
+  /** True when a key may still be used, honouring `not_after` at the point of use. See isKeyUsable. */
   private usable(state: masterClient.$Enums.KeyState, notAfter: Date | null): boolean {
-    if (state === "revoked" || state === "pending") return false;
-    // Checked here rather than trusted to a sweeper. A sweeper that has not run yet, or that
-    // failed, would otherwise leave an expired key verifying tokens indefinitely.
-    if (notAfter && notAfter.getTime() <= Date.now()) return false;
-    return true;
+    return isKeyUsable({ state, notAfter });
   }
 
   private async refresh(): Promise<void> {
     this.lastRefreshAt = Date.now();
+    let rows: KeyRow[];
     try {
-      const rows = await this.cm.master.configKey.findMany({
+      rows = await this.cm.master.configKey.findMany({
         // Revoked rows are kept as evidence but hold no material, so there is nothing to load.
         where: { state: { in: ["active", "retiring"] } },
       });
-
-      const next: Snapshot = {
-        signing: new Map(),
-        encryption: new Map(),
-        activeSigningKid: undefined,
-        activeEncryptionKid: undefined,
-      };
-
-      for (const row of rows) {
-        if (!row.wrappedKey) continue;
-        const material = await this.provider.unwrap(new Uint8Array(row.wrappedKey), {
-          purpose: row.purpose,
-          kid: row.kid,
-        });
-
-        if (row.purpose === "token_signing") {
-          if (!row.publicJwk) continue;
-          const publicJwk = row.publicJwk as JWK;
-          next.signing.set(row.kid, {
-            kid: row.kid,
-            privateKey: await importSigningKey(new TextDecoder().decode(material)),
-            publicKey: await importVerificationKey(publicJwk),
-            publicJwk,
-            state: row.state,
-            notAfter: row.notAfter,
-          });
-          if (row.state === "active") next.activeSigningKid = row.kid;
-        } else {
-          next.encryption.set(row.kid, {
-            kid: row.kid,
-            secret: material,
-            state: row.state,
-            notAfter: row.notAfter,
-          });
-          if (row.state === "active") next.activeEncryptionKid = row.kid;
-        }
-      }
-
-      this.snapshot = next;
-      this.logger.log(
-        `Loaded ${next.signing.size} signing and ${next.encryption.size} encryption key(s)`,
-      );
     } catch (err) {
       // Keep serving with the previous snapshot rather than dropping every key because the database
       // blipped. Failing closed here would turn a transient master-database outage into a total
@@ -284,6 +252,64 @@ export class KeyRegistryService implements OnModuleInit, OnModuleDestroy {
         `Could not refresh the key registry, continuing with the previous snapshot: ` +
           `${err instanceof Error ? err.message : String(err)}`,
       );
+      return;
+    }
+
+    const next: Snapshot = {
+      signing: new Map(),
+      encryption: new Map(),
+      activeSigningKid: undefined,
+      activeEncryptionKid: undefined,
+    };
+
+    // One row at a time, so a row that cannot be loaded costs that key and not every key. This used to
+    // be one try around the whole loop, and one bad row (a key wrapped under a previous KEK, a corrupted
+    // blob) threw out of it, so the refresh loaded NOTHING: at boot that is a deployment with no keys at
+    // all, and at runtime a snapshot that stops following rotations. Unlike a database outage, a row
+    // failing here is not transient (unwrapping is deterministic), so the snapshot is replaced without it
+    // rather than kept: if that key was tampered with, it should stop being used, loudly.
+    //
+    // What makes a row trustworthy (its KEK, its algorithm, a public JWK bound to the wrapped private key
+    // and to the row's own kid) is decided in loadStoredKey, shared with the keys:decode CLI so the two
+    // cannot disagree about which keys are real.
+    for (const row of rows) {
+      if (!row.wrappedKey) continue;
+      try {
+        this.add(await loadStoredKey(this.provider, row), row, next);
+      } catch (err) {
+        this.logger.error(
+          `Could not load key ${row.kid} (${row.purpose}), so it is not in use: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    this.snapshot = next;
+    this.logger.log(
+      `Loaded ${next.signing.size} signing and ${next.encryption.size} encryption key(s)`,
+    );
+  }
+
+  /** Put a key that loaded into `next`, with the lifecycle state the row carries. */
+  private add(key: LoadedKey, row: KeyRow, next: Snapshot): void {
+    if (key.purpose === "token_signing") {
+      next.signing.set(key.kid, {
+        kid: key.kid,
+        privateKey: key.privateKey,
+        publicKey: key.publicKey,
+        publicJwk: key.publicJwk,
+        state: row.state,
+        notAfter: row.notAfter,
+      });
+      if (row.state === "active") next.activeSigningKid = key.kid;
+    } else {
+      next.encryption.set(key.kid, {
+        kid: key.kid,
+        secret: key.secret,
+        state: row.state,
+        notAfter: row.notAfter,
+      });
+      if (row.state === "active") next.activeEncryptionKid = key.kid;
     }
   }
 }

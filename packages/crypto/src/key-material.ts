@@ -90,6 +90,46 @@ export async function importVerificationKey(publicJwk: JWK): Promise<CryptoKey> 
   return key;
 }
 
+/**
+ * True when `publicJwk` is the public half of `privatePkcs8`.
+ *
+ * The registry stores the two halves of a signing key in different forms. The private half is wrapped
+ * by the KEK, so a write to the database cannot forge it without the KEK. The public half sits in the
+ * clear, so any write to the database can replace it, and the public half is what verifies tokens here
+ * and what the JWKS hands every other verifier. Without this comparison, anyone able to write
+ * `config_keys` could swap in a public key of their own and have tokens they signed accepted, which
+ * is the one thing envelope encryption was supposed to make a database compromise unable to do.
+ * Deriving the public point from the private key and comparing binds the column to the material the
+ * KEK protects.
+ *
+ * Compares the key material fields only. The metadata a JWK also carries (`kid`, `alg`, `use`) is
+ * checked by `loadStoredKey`, which is the one place a stored row becomes a usable key.
+ */
+export async function publicJwkMatchesPrivateKey(
+  privatePkcs8: string,
+  publicJwk: JWK,
+): Promise<boolean> {
+  return sameKeyMaterial(await derivePublicJwk(privatePkcs8), publicJwk);
+}
+
+/**
+ * The public half of a signing key, derived from its private half: `kty`, `crv`, `x` and `y` only.
+ *
+ * Derived rather than read from storage, so that what verifies and what gets published follow from the
+ * material the KEK protects rather than from a column anyone with database write access can edit.
+ */
+export async function derivePublicJwk(privatePkcs8: string): Promise<JWK> {
+  // Extractable for this derivation only; the key used for signing is imported non-extractable.
+  const privateKey = await importPKCS8(privatePkcs8, SIGNING_ALG, { extractable: true });
+  const { kty, crv, x, y } = await exportJWK(privateKey);
+  return { kty, crv, x, y };
+}
+
+/** True when two JWKs describe the same EC public point. */
+export function sameKeyMaterial(a: JWK, b: JWK): boolean {
+  return a.kty === b.kty && a.crv === b.crv && a.x === b.x && a.y === b.y;
+}
+
 /** A JWKS document, as served from /.well-known/jwks.json. */
 export interface Jwks {
   keys: JWK[];

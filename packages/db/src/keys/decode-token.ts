@@ -20,11 +20,11 @@
  */
 import {
   LocalKeyProvider,
-  importVerificationKey,
+  isKeyUsable,
+  loadStoredKey,
   verifyNestedToken,
   type CryptoKey,
   type EncryptionKeyResolver,
-  type JWK,
   type SigningKeyResolver,
 } from "@compliance-kit/crypto";
 import { ConnectionManager } from "../connection-manager";
@@ -74,32 +74,53 @@ async function main(): Promise<void> {
      *
      * The resolvers pre-load rather than query lazily, because the codec's resolvers are
      * synchronous by design: see the comment on TokenResolvers.
+     *
+     * "Exactly as" is literal, and used not to be. This tool had its own loading loop, which imported
+     * the verification key straight from the stored public JWK, never checked kek_id, let one
+     * unreadable row abort the command, and ignored not_after, so it could call a token valid that the
+     * service refuses. Rows now go through loadStoredKey, the function the service uses, one at a
+     * time, and the resolvers apply the service's isKeyUsable rule.
      */
     const rows = await cm.master.configKey.findMany({
       where: { state: { in: ["active", "retiring"] } },
     });
 
-    const signing = new Map<string, CryptoKey>();
-    const encryption = new Map<string, Uint8Array>();
+    interface Usable<T> {
+      key: T;
+      state: string;
+      notAfter: Date | null;
+    }
+    const signing = new Map<string, Usable<CryptoKey>>();
+    const encryption = new Map<string, Usable<Uint8Array>>();
     for (const row of rows) {
       if (!row.wrappedKey) continue;
-      if (row.purpose === "token_signing") {
-        if (row.publicJwk) {
-          signing.set(row.kid, await importVerificationKey(row.publicJwk as JWK));
+      try {
+        const loaded = await loadStoredKey(provider, row);
+        if (loaded.purpose === "token_signing") {
+          signing.set(loaded.kid, {
+            key: loaded.publicKey,
+            state: row.state,
+            notAfter: row.notAfter,
+          });
+        } else {
+          encryption.set(loaded.kid, {
+            key: loaded.secret,
+            state: row.state,
+            notAfter: row.notAfter,
+          });
         }
-      } else {
-        encryption.set(
-          row.kid,
-          await provider.unwrap(new Uint8Array(row.wrappedKey), {
-            purpose: row.purpose,
-            kid: row.kid,
-          }),
+      } catch (err) {
+        // One bad row costs that key, as in the service, and says why on stderr.
+        process.stderr.write(
+          `skipping key ${row.kid} (${row.purpose}): ${err instanceof Error ? err.message : String(err)}\n`,
         );
       }
     }
 
-    const signingResolver: SigningKeyResolver = (kid) => signing.get(kid);
-    const encryptionResolver: EncryptionKeyResolver = (kid) => encryption.get(kid);
+    const usable = <T>(entry: Usable<T> | undefined): T | undefined =>
+      entry && isKeyUsable(entry) ? entry.key : undefined;
+    const signingResolver: SigningKeyResolver = (kid) => usable(signing.get(kid));
+    const encryptionResolver: EncryptionKeyResolver = (kid) => usable(encryption.get(kid));
 
     // The headers come back from the verification itself, so everything reported below describes a
     // token that actually passed. There is no decode-without-verify path in this tool by design.

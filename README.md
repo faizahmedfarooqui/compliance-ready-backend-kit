@@ -128,7 +128,7 @@ Then, in another shell:
 
 ```bash
 export CONTROL_PLANE_API_KEY='<the value from your .env>'
-pnpm smoke                    # 92 end-to-end checks, including isolation and token forgery
+pnpm smoke                    # 100 end-to-end checks, including isolation and token forgery
 pnpm verify:claims            # the same evidence, reported per compliance control
 ```
 
@@ -139,7 +139,7 @@ like a broken install.
 `pnpm verify:claims` is the one to run if you are evaluating rather than developing. It executes the
 smoke suite, both audit probes, the slowloris probe, the unit tests and `pnpm audit`, then reports
 each result grouped by the control it supports, with that control's HIPAA, PCI-DSS and SOC 2 citation
-alongside: 51 items across the nine Implemented rows, plus one on a Partial row. "267 tests pass" is
+alongside: 59 items across the nine Implemented rows, plus one on a Partial row. "344 tests pass" is
 a fact about this repository; that output answers whether a given row in
 [COMPLIANCE.md](./COMPLIANCE.md) is actually true.
 
@@ -293,10 +293,12 @@ Two settings deserve a decision rather than a default:
   shares one bucket, so the first busy client throttles everyone. Set `true` without a trusted proxy in
   front, and any caller sends `X-Forwarded-For` to get a fresh bucket per request. It defaults to
   `false` because that failure is loud and the other is silent.
-- **`RATE_LIMIT_FAIL_OPEN`** decides what happens when Redis is unreachable. Open by default, because
-  closed turns a Redis blip into a total API outage including login, which is a bigger incident than
+- **`RATE_LIMIT_FAIL_OPEN`** decides what the request-tier limits do when Redis is unreachable. Open by
+  default, because closed turns a Redis blip into a total API outage, which is a bigger incident than
   the one being prevented. Every occurrence is logged at error level and the response carries
-  `X-RateLimit-Degraded: true`, so the degradation is visible rather than quiet.
+  `X-RateLimit-Degraded: true`, so the degradation is visible rather than quiet. **The login throttle
+  is not governed by it and always fails closed:** an attempt it cannot count is refused with a 429,
+  because unlimited password guessing during an outage is the thing the throttle exists to prevent.
 
 ### The control plane needs its own credential
 
@@ -454,7 +456,7 @@ packages/
 services/
   auth/      NestJS + Fastify: tenancy, auth, RBAC, audit, rate limiting, control plane
 scripts/
-  smoke-test.sh       92 end-to-end checks
+  smoke-test.sh       100 end-to-end checks
   slowloris-probe.mjs raw-socket request-timeout probe
   clean-test-tenants.sh, stop-auth.sh
 docs/            the documentation set; start at docs/README.md
@@ -497,8 +499,8 @@ a request, until its database is fully built.
 ## Status
 
 v0.2 is **auth + RBAC + a key registry + rate limiting + an authenticated control plane + an
-append-only audit log**, on the database-per-tenant foundation. It builds, typechecks, passes 267 unit
-tests and a 92-check end-to-end smoke test against a live Postgres and Redis, run in CI on every push.
+append-only audit log**, on the database-per-tenant foundation. It builds, typechecks, passes 344 unit
+tests and a 100-check end-to-end smoke test against a live Postgres and Redis, run in CI on every push.
 `pnpm verify:claims` reproduces the evidence behind every control the mapping marks Implemented, and
 CI fails if one of those rows has no evidence registered.
 
