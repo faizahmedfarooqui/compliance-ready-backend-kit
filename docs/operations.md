@@ -55,12 +55,13 @@ Every command, and the runbooks for the things you will actually need to do.
 | `pnpm audit:verify --tenant <slug\|uuid>` | Verify one tenant's chain |
 | `pnpm audit:immutability --master\|--tenant <slug\|uuid>` | Prove the log refuses UPDATE, DELETE, TRUNCATE |
 | `pnpm audit:contention --appends 50` | Prove concurrent appends cannot fork the chain |
+| `pnpm provisioning:probe` | Prove an interrupted provisioning resumes, and a database built for another tenant is refused |
 
 ### Tests
 
 | Command | Does |
 | --- | --- |
-| `pnpm test` | 344 unit tests, no database needed |
+| `pnpm test` | 347 unit tests, no database needed |
 | `pnpm test:coverage` | With coverage thresholds |
 | `pnpm test:watch` | The same suite, on file changes |
 | `pnpm smoke` | 100 end-to-end checks against a running service |
@@ -168,12 +169,43 @@ Work down this list; it is roughly in order of likelihood.
 | Symptom | Cause |
 | --- | --- |
 | Error about no active signing key | `pnpm keys:init` was never run |
-| `404 TENANT_NOT_FOUND` | Wrong slug, or the tenant is still `provisioning` |
+| `404 TENANT_NOT_FOUND` | Wrong slug, or the tenant is still `provisioning`: see [the next runbook](#recover-a-provisioning-that-failed) |
 | `401 INVALID_CREDENTIALS` for a user you are sure exists | Provisioning creates no users; seed the admin |
 | `429` immediately | Login throttle from earlier failures. Ten failures per 15 min, cleared on success |
 | `400 TENANT_CONTEXT_MISSING` | Missing `x-tenant-id` |
 | `401 CROSS_TENANT_TOKEN` | The token belongs to a different tenant than the header names |
 | Everything behaves like an older build | A stale server holds the port. Check `uptimeSeconds` on `/api/health` |
+
+### Recover a provisioning that failed
+
+A `POST /api/tenants` that fails partway, because the cluster was unreachable, the schema transaction
+rolled back or the process died, leaves the tenant registered as `provisioning`: not resolvable, and
+never served. **Repeat the request with the same slug and the same name.** It resumes where the failed
+run stopped and answers `201`, and its `tenant.provisioned` event carries `resumed: "true"`.
+
+Two other answers mean something specific:
+
+- **`409 TENANT_PROVISIONING_IN_PROGRESS`**: another request is provisioning that slug right now. Wait
+  for it to finish, then repeat the request.
+- **A `500` whose log line names `TenantDatabaseConflictError`**: the tenant's database name is taken by
+  a database this provisioning did not build, either one marked for a different tenant or one holding the
+  tenant schema with no marker. It is refused and left untouched, because it may hold another tenant's
+  users and audit log. Find out what it is before changing anything. Once the name is free, repeating
+  the request resumes the provisioning.
+
+One case of the second is benign: a tenant stuck in `provisioning` by a version of the kit from before the
+marker, whose database was fully built before the failure, so it holds the schema and no marker. A tenant
+that never became `active` cannot have had users or audit events, because both need it to resolve, so if
+its database has none, nothing in it belongs to anyone:
+
+```sql
+-- in the tenant's database
+SELECT (SELECT count(*) FROM users) AS users, (SELECT count(*) FROM audit_events) AS events;
+-- both 0: mark it for its row (the id from `SELECT id FROM tenants WHERE slug = '<slug>'` on the master)
+COMMENT ON DATABASE "tenant_<slug>" IS 'crbk-tenant:<row id>';
+```
+
+Then repeat the request. Any other count means the database held a real tenant: do not mark it.
 
 ### Clean up after testing
 

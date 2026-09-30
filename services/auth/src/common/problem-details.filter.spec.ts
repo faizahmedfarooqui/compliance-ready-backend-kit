@@ -10,6 +10,7 @@ import {
   InvalidCredentialsError,
   TenantAlreadyExistsError,
   TenantNotFoundError,
+  TenantProvisioningInProgressError,
   TooManyRequestsError,
   ValidationFailedError,
   type ProblemDetails,
@@ -98,6 +99,8 @@ describe("ProblemDetailsFilter", () => {
     [new InvalidAccessTokenError(), 401, "INVALID_ACCESS_TOKEN"],
     [new CrossTenantTokenError(), 401, "CROSS_TENANT_TOKEN"],
     [new TenantNotFoundError("x"), 404, "TENANT_NOT_FOUND"],
+    [new TenantAlreadyExistsError("x"), 409, "TENANT_ALREADY_EXISTS"],
+    [new TenantProvisioningInProgressError("x"), 409, "TENANT_PROVISIONING_IN_PROGRESS"],
     [new EmailAlreadyRegisteredError(), 409, "EMAIL_ALREADY_REGISTERED"],
   ])("maps %s to the right status and code", (err, status, code) => {
     const sent = capture(err);
@@ -302,6 +305,7 @@ describe("every emittable type URI resolves to a documented anchor", () => {
   const domainErrors = [
     new TenantNotFoundError("nope"),
     new TenantAlreadyExistsError("acme"),
+    new TenantProvisioningInProgressError("acme"),
     new EmailAlreadyRegisteredError(),
     new InvalidCredentialsError(),
     new InvalidAccessTokenError(),

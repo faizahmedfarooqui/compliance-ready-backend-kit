@@ -18,6 +18,7 @@ import {
   TenantAlreadyExistsError,
   TenantContextMissingError,
   TenantNotFoundError,
+  TenantProvisioningInProgressError,
   TooManyRequestsError,
   ValidationFailedError,
   type ProblemDetails,
@@ -47,6 +48,7 @@ const STATUS_BY_ERROR: readonly [new (...args: never[]) => DomainError, HttpStat
   [ControlPlaneUnauthorizedError, HttpStatus.UNAUTHORIZED],
   [TenantNotFoundError, HttpStatus.NOT_FOUND],
   [TenantAlreadyExistsError, HttpStatus.CONFLICT],
+  [TenantProvisioningInProgressError, HttpStatus.CONFLICT],
   [EmailAlreadyRegisteredError, HttpStatus.CONFLICT],
   // Well-formed JSON, unacceptable values. A malformed body never reaches here: Fastify
   // rejects it with 400 first, so 400 and 422 stay meaningfully different for clients.

@@ -64,10 +64,11 @@ skip the export, provisioning returns 401 and roughly a dozen checks fail with
 Other checks worth running once, each covering something the smoke test structurally cannot:
 
 ```bash
-pnpm test                       # 344 unit tests, no database needed
+pnpm test                       # 347 unit tests, no database needed
 pnpm smoke:slowloris            # raw-socket check that the request timeout is real
 pnpm audit:contention           # 50 concurrent appends; asserts the chain cannot fork
 pnpm audit:immutability --master # asserts the audit log refuses UPDATE, DELETE and TRUNCATE
+pnpm provisioning:probe         # interrupted provisionings resume; a foreign database is refused
 ```
 
 See [testing](testing.md) for why each of those is a separate tool rather than another smoke step.

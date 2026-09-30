@@ -29,16 +29,24 @@ export class TenantsService {
    * than trusting this code to remember. The credential authenticates the bearer and not a person, so an
    * identifier here would imply an attribution it cannot support. What this row can honestly say is that
    * the control plane was used; answering WHO needs mutual TLS or a signed operator token.
+   *
+   * `resumed: "true"` when this request finished a provisioning an earlier one started and did not
+   * complete. The earlier attempt recorded nothing, since only a completed provision is recorded, so
+   * this is the only trace in the chain that the first attempt failed.
    */
   async provision(dto: ProvisionTenantDto): Promise<Tenant> {
-    const tenant = await this.cm.provisionTenant({ slug: dto.slug, name: dto.name });
+    const { tenant, resumed } = await this.cm.provisionTenant({ slug: dto.slug, name: dto.name });
 
     await this.audit.controlPlaneEvent({
       action: "tenant.provisioned",
       actorType: "control_plane",
       resourceType: "tenant",
       resourceId: tenant.id,
-      metadata: { slug: tenant.slug, databaseName: tenant.databaseName },
+      metadata: {
+        slug: tenant.slug,
+        databaseName: tenant.databaseName,
+        ...(resumed ? { resumed: "true" } : {}),
+      },
     });
 
     return tenant;
