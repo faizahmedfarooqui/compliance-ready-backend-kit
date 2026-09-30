@@ -156,8 +156,9 @@ describe("RateLimitStore member ids", () => {
       expect(result.retryAfterMs).toBeLessThanOrEqual(1_000);
     });
 
-    // Login throttling consults peek before checking a password, so a peek that rejected during an
-    // outage would lock every user out of the service entirely.
+    // peek reports and does not decide: allowed plus degraded, whatever the policy. The login throttle
+    // is what turns degraded into a refusal (its own tests pin that). Were the store to refuse as well,
+    // the caller could no longer tell an outage from a full window, and would lose the audit reason.
     it("always allows a peek, whatever the fail-open policy says", async () => {
       const store = new RateLimitStore(failing(), { rateLimitFailOpen: false } as AppConfig);
       const result = await store.peek("k", 10, 900_000);
