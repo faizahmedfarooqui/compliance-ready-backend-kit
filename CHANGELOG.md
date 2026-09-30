@@ -35,9 +35,21 @@ These change what a client or an operator observes. Read them before upgrading.
   so `packages/db/sql/restricted-role.sql` no longer grants it write access, and re-running the file over a
   database set up by an earlier version removes it. Run `keys:init`, `keys:rotate` and `keys:revoke` as the
   owning role, as docs/deployment.md's migrator image already does; as `crbk_app` they now fail with 42501.
+- **The runtime image's files belong to root.** The service still runs as the unprivileged `node` user, but it
+  can no longer rewrite its own code, or the SQL that provisioning applies to every new tenant database,
+  immutability triggers included. The image used to give that user ownership of both. Anything that wrote
+  under `/app` at runtime needs a mounted volume instead.
+- **`docker-compose.yml` publishes Postgres and Redis on 127.0.0.1 only.** It used to publish them on every
+  interface, so the development databases were reachable from other machines on the same network.
 
 ### Fixed
 
+- **The container image builds again.** It had not built since the upgrade to pnpm 11, because pnpm 10 made
+  `pnpm deploy` refuse a workspace that does not inject its packages, and nothing noticed for a month
+  because no workflow built the image. The Dockerfile passes `--legacy`, and a new CI job, Container image,
+  builds both targets on every push and pull request, then boots the runtime with Postgres and Redis
+  unreachable and fails unless it reports the version in package.json, passes its own HEALTHCHECK, and
+  cannot write its code or the provisioning SQL.
 - **The key registry no longer trusts a stored public key on its own.** Each signing key's published JWK is
   checked against its KEK-wrapped private key, and a mismatch keeps the key out of use, so write access to
   `config_keys` is no longer enough to substitute a verification key. Keys also load one row at a time,
@@ -60,6 +72,10 @@ These change what a client or an operator observes. Read them before upgrading.
   out; docs/key-management.md says what that means where a standard requires key destruction.
 - **The prerequisite is pnpm 11**, installed by `corepack enable`, not pnpm 9. A pnpm older than 10.5 does not
   read `pnpm-workspace.yaml` and installs without the security overrides.
+- **`scripts/clean-test-tenants.sh` no longer lists a real tenant as a test one.** Its LIKE patterns left `_`
+  unescaped, and `_` matches any one character, so `tenant_smoke_%` also matched `tenant_smokeshop`, the
+  database of a tenant called smokeshop. The drop step's own check skipped it, but the listing reported it
+  and the script then exited with an error.
 
 ### Dependencies
 
@@ -70,10 +86,19 @@ These change what a client or an operator observes. Read them before upgrading.
 - **dotenv 18**, a major. It drops `-r dotenv/config` preloading and `.env.vault` support. The kit uses neither;
   a project built on it that does needs `dotenv run -- <command>` instead.
 
+### Build and CI
+
+- **The base image is pinned by digest**, with its tag kept for reading, and a `docker` entry in
+  `.github/dependabot.yml` proposes each new digest as a pull request, so a rebuild cannot pick up a
+  different base image without review.
+- **No checkout leaves the job token in `.git/config`** (`persist-credentials: false` on each), and the
+  Dependabot auto-merge workflow, whose `pull_request_target` trigger runs with a write token, passes pull
+  request metadata to its shell through `env:` rather than writing it into the script.
+
 ### Verification
 
-344 unit tests, a 100-check end-to-end suite, and `pnpm verify:claims` reporting 59 evidence items across the
-nine Implemented rows.
+344 unit tests, a 100-check end-to-end suite, `pnpm verify:claims` reporting 59 evidence items across the
+nine Implemented rows, and the container image built and booted in CI on every push.
 
 ## v0.2.0
 
