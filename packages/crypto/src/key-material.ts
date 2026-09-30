@@ -90,6 +90,36 @@ export async function importVerificationKey(publicJwk: JWK): Promise<CryptoKey> 
   return key;
 }
 
+/**
+ * True when `publicJwk` is the public half of `privatePkcs8`.
+ *
+ * The registry stores the two halves of a signing key in different forms. The private half is wrapped
+ * by the KEK, so a write to the database cannot forge it without the KEK. The public half sits in the
+ * clear, so any write to the database can replace it, and the public half is what verifies tokens here
+ * and what the JWKS hands every other verifier. Without this comparison, anyone able to write
+ * `config_keys` could swap in a public key of their own and have tokens they signed accepted, which
+ * is the one thing envelope encryption was supposed to make a database compromise unable to do.
+ * Deriving the public point from the private key and comparing binds the column to the material the
+ * KEK protects.
+ *
+ * Compares the key material fields only. `kid`, `alg` and `use` are registry metadata that the caller
+ * already checks by other means (the kid is the row's key, the algorithm a CHECK constraint).
+ */
+export async function publicJwkMatchesPrivateKey(
+  privatePkcs8: string,
+  publicJwk: JWK,
+): Promise<boolean> {
+  // Extractable for this one comparison only; the key used for signing is imported non-extractable.
+  const privateKey = await importPKCS8(privatePkcs8, SIGNING_ALG, { extractable: true });
+  const derived = await exportJWK(privateKey);
+  return (
+    derived.kty === publicJwk.kty &&
+    derived.crv === publicJwk.crv &&
+    derived.x === publicJwk.x &&
+    derived.y === publicJwk.y
+  );
+}
+
 /** A JWKS document, as served from /.well-known/jwks.json. */
 export interface Jwks {
   keys: JWK[];

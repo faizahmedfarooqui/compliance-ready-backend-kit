@@ -10,6 +10,7 @@ import {
   LocalKeyProvider,
   importSigningKey,
   importVerificationKey,
+  publicJwkMatchesPrivateKey,
   toJwks,
   type EncryptionKeyResolver,
   type Jwks,
@@ -76,6 +77,17 @@ interface LoadedEncryptionKey {
   kid: string;
   secret: Uint8Array;
   state: masterClient.$Enums.KeyState;
+  notAfter: Date | null;
+}
+
+/** The columns of a `config_keys` row that loading reads. */
+interface KeyRow {
+  kid: string;
+  purpose: masterClient.$Enums.KeyPurpose;
+  state: masterClient.$Enums.KeyState;
+  wrappedKey: Uint8Array | null;
+  kekId: string;
+  publicJwk: unknown;
   notAfter: Date | null;
 }
 
@@ -229,53 +241,12 @@ export class KeyRegistryService implements OnModuleInit, OnModuleDestroy {
 
   private async refresh(): Promise<void> {
     this.lastRefreshAt = Date.now();
+    let rows: KeyRow[];
     try {
-      const rows = await this.cm.master.configKey.findMany({
+      rows = await this.cm.master.configKey.findMany({
         // Revoked rows are kept as evidence but hold no material, so there is nothing to load.
         where: { state: { in: ["active", "retiring"] } },
       });
-
-      const next: Snapshot = {
-        signing: new Map(),
-        encryption: new Map(),
-        activeSigningKid: undefined,
-        activeEncryptionKid: undefined,
-      };
-
-      for (const row of rows) {
-        if (!row.wrappedKey) continue;
-        const material = await this.provider.unwrap(new Uint8Array(row.wrappedKey), {
-          purpose: row.purpose,
-          kid: row.kid,
-        });
-
-        if (row.purpose === "token_signing") {
-          if (!row.publicJwk) continue;
-          const publicJwk = row.publicJwk as JWK;
-          next.signing.set(row.kid, {
-            kid: row.kid,
-            privateKey: await importSigningKey(new TextDecoder().decode(material)),
-            publicKey: await importVerificationKey(publicJwk),
-            publicJwk,
-            state: row.state,
-            notAfter: row.notAfter,
-          });
-          if (row.state === "active") next.activeSigningKid = row.kid;
-        } else {
-          next.encryption.set(row.kid, {
-            kid: row.kid,
-            secret: material,
-            state: row.state,
-            notAfter: row.notAfter,
-          });
-          if (row.state === "active") next.activeEncryptionKid = row.kid;
-        }
-      }
-
-      this.snapshot = next;
-      this.logger.log(
-        `Loaded ${next.signing.size} signing and ${next.encryption.size} encryption key(s)`,
-      );
     } catch (err) {
       // Keep serving with the previous snapshot rather than dropping every key because the database
       // blipped. Failing closed here would turn a transient master-database outage into a total
@@ -284,6 +255,86 @@ export class KeyRegistryService implements OnModuleInit, OnModuleDestroy {
         `Could not refresh the key registry, continuing with the previous snapshot: ` +
           `${err instanceof Error ? err.message : String(err)}`,
       );
+      return;
+    }
+
+    const next: Snapshot = {
+      signing: new Map(),
+      encryption: new Map(),
+      activeSigningKid: undefined,
+      activeEncryptionKid: undefined,
+    };
+
+    // One row at a time, so a row that cannot be loaded costs that key and not every key. This used to
+    // be one try around the whole loop, and one bad row (a key wrapped under a previous KEK, a corrupted
+    // blob) threw out of it, so the refresh loaded NOTHING: at boot that is a deployment with no keys at
+    // all, and at runtime a snapshot that stops following rotations. Unlike a database outage, a row
+    // failing here is not transient (unwrapping is deterministic), so the snapshot is replaced without it
+    // rather than kept: if that key was tampered with, it should stop being used, loudly.
+    for (const row of rows) {
+      if (!row.wrappedKey) continue;
+      // `kek_id` exists so a deployment can tell which rows it is able to unwrap. Checked rather than
+      // discovered by a failed unwrap, so the log names the actual cause.
+      if (row.kekId !== this.provider.id) {
+        this.logger.error(
+          `Key ${row.kid} (${row.purpose}) was wrapped by key-encrypting key "${row.kekId}", and this ` +
+            `process holds "${this.provider.id}", so the key is not loaded.`,
+        );
+        continue;
+      }
+      try {
+        await this.loadRow(row, next);
+      } catch (err) {
+        this.logger.error(
+          `Could not load key ${row.kid} (${row.purpose}), so it is not in use: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    this.snapshot = next;
+    this.logger.log(
+      `Loaded ${next.signing.size} signing and ${next.encryption.size} encryption key(s)`,
+    );
+  }
+
+  /** Unwrap one row into `next`. Throws when the row cannot be trusted, which skips that key only. */
+  private async loadRow(row: KeyRow, next: Snapshot): Promise<void> {
+    const material = await this.provider.unwrap(new Uint8Array(row.wrappedKey ?? []), {
+      purpose: row.purpose,
+      kid: row.kid,
+    });
+
+    if (row.purpose === "token_signing") {
+      if (!row.publicJwk) throw new Error("the signing key has no public JWK to verify with");
+      const publicJwk = row.publicJwk as JWK;
+      const privatePkcs8 = new TextDecoder().decode(material);
+      // The public half verifies tokens and is published in the JWKS, but it is stored in the clear,
+      // so it is only trusted once shown to belong to the private half the KEK protects. See
+      // publicJwkMatchesPrivateKey for what skipping this would allow.
+      if (!(await publicJwkMatchesPrivateKey(privatePkcs8, publicJwk))) {
+        throw new Error(
+          "its stored public JWK is not the public half of its wrapped private key, so the column " +
+            "may have been replaced; refusing to verify or publish with it",
+        );
+      }
+      next.signing.set(row.kid, {
+        kid: row.kid,
+        privateKey: await importSigningKey(privatePkcs8),
+        publicKey: await importVerificationKey(publicJwk),
+        publicJwk,
+        state: row.state,
+        notAfter: row.notAfter,
+      });
+      if (row.state === "active") next.activeSigningKid = row.kid;
+    } else {
+      next.encryption.set(row.kid, {
+        kid: row.kid,
+        secret: material,
+        state: row.state,
+        notAfter: row.notAfter,
+      });
+      if (row.state === "active") next.activeEncryptionKid = row.kid;
     }
   }
 }

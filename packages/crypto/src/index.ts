@@ -39,6 +39,7 @@ export {
   importSigningKey,
   importVerificationKey,
   newKid,
+  publicJwkMatchesPrivateKey,
   toJwks,
   type GeneratedEncryptionKey,
   type GeneratedSigningKey,

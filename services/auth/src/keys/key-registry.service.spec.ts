@@ -229,4 +229,55 @@ describe("KeyRegistryService", () => {
       registry.onModuleDestroy();
     });
   });
+
+  /**
+   * Loading only what can be trusted, one row at a time. A registry that loads nothing when one row
+   * is bad takes authentication down with it; one that loads a row it should not have trusted gives
+   * that row's key to whoever planted it. Both are silent from the outside.
+   */
+  describe("loading", () => {
+    it("refuses a signing key whose public JWK was replaced with another key's", async () => {
+      const signing = await signingRow("active");
+      const imposter = await generateSigningKey();
+      // Everything but the key material agrees, which is what a database write can achieve without
+      // the KEK: the wrapped private key cannot be forged, the clear public JWK can.
+      signing.publicJwk = { ...imposter.publicJwk, kid: signing.kid };
+      const registry = await registryOver([signing, await encryptionRow("active")]);
+
+      expect(registry.resolvers().signing(signing.kid)).toBeUndefined();
+      expect(registry.jwks().keys).toHaveLength(0);
+      // With the only signing key refused, issuing fails loudly instead of signing with a key whose
+      // published half belongs to someone else.
+      expect(() => registry.activeMaterial()).toThrow(NoActiveKeyError);
+      registry.onModuleDestroy();
+    });
+
+    it("still loads every other key when one row cannot be unwrapped", async () => {
+      const signing = await signingRow("active");
+      const encryption = await encryptionRow("active");
+      const broken = await signingRow("retiring", new Date(Date.now() + 60_000));
+      // A flipped byte in the ciphertext fails GCM authentication, as a tampered blob or a row
+      // wrapped under a different KEK would.
+      const blob = Buffer.from(broken.wrappedKey ?? []);
+      blob[20] ^= 0xff;
+      broken.wrappedKey = blob;
+      const registry = await registryOver([broken, signing, encryption]);
+
+      expect(registry.activeMaterial().signing.kid).toBe(signing.kid);
+      expect(registry.resolvers().signing(broken.kid)).toBeUndefined();
+      registry.onModuleDestroy();
+    });
+
+    it("skips a row wrapped by a key-encrypting key this process does not hold", async () => {
+      const signing = await signingRow("active");
+      const encryption = await encryptionRow("active");
+      const foreign = await encryptionRow("retiring", new Date(Date.now() + 60_000));
+      foreign.kekId = "kms:some-other-kek";
+      const registry = await registryOver([foreign, signing, encryption]);
+
+      expect(registry.resolvers().encryption(foreign.kid)).toBeUndefined();
+      expect(registry.activeMaterial().encryption.kid).toBe(encryption.kid);
+      registry.onModuleDestroy();
+    });
+  });
 });
