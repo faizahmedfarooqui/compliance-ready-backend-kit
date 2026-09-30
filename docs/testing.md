@@ -6,8 +6,8 @@ What is proven, how, and the deliberate decision not to unit test the database l
 
 | Command | What it is | Needs |
 | --- | --- | --- |
-| `pnpm test` | 267 unit tests across 15 files | nothing |
-| `pnpm smoke` | 92 end-to-end checks | a running service, Postgres, Redis |
+| `pnpm test` | 344 unit tests across 20 files | nothing |
+| `pnpm smoke` | 100 end-to-end checks | a running service, Postgres, Redis |
 | `pnpm smoke:slowloris` | raw-socket request-timeout probe | a running service |
 | `pnpm audit:contention` | concurrent-append fork probe | Postgres |
 | `pnpm audit:immutability --master \| --tenant <slug\|uuid>` | append-only enforcement probe | Postgres |
@@ -23,10 +23,10 @@ tested for the reasons below.
 ## Reading the results by control instead of by suite
 
 The table above is organised by mechanism, which is the wrong axis for the question most readers of this
-repository actually have. "267 tests pass" is a fact about the project's diligence; it is not an answer to
+repository actually have. "344 tests pass" is a fact about the project's diligence; it is not an answer to
 "is multi-tenant isolation real". `pnpm verify:claims` runs the same suites and reports every result
 grouped under the control it supports, with that control's HIPAA, PCI-DSS and SOC 2 citation beside it:
-51 items across the nine rows COMPLIANCE.md marks Implemented, plus one on a Partial row.
+59 items across the nine rows COMPLIANCE.md marks Implemented, plus one on a Partial row.
 
 It re-implements nothing. Each entry in its registry is a substring matched against a **passing line** of
 a suite's real output, so the assertions stay where they were written. A copy of an assertion inside that
@@ -130,7 +130,7 @@ test actually booting the application.
 
 ## The smoke test
 
-92 checks in 18 steps against a running service. Notable ones:
+100 checks in 18 steps against a running service. Notable ones:
 
 | Step | Proves |
 | --- | --- |

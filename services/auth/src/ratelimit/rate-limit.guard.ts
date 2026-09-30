@@ -4,6 +4,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { TooManyRequestsError } from "@compliance-kit/common";
 import type { AppConfig } from "@compliance-kit/config";
 import { CONFIG } from "../core/tokens";
+import { rateLimitIdentity } from "./client-address";
 import { RateLimitStore, type RateLimitResult } from "./rate-limit.store";
 import { NO_RATE_LIMIT_KEY, RATE_LIMIT_KEY, type RateLimitOptions } from "./rate-limit.decorator";
 
@@ -98,7 +99,8 @@ export class RateLimitGuard implements CanActivate {
    */
   private clientId(request: FastifyRequest): string {
     const ip = request.ip;
-    if (typeof ip === "string" && ip.length > 0) return ip;
+    // The /64 for IPv6, or one host could draw a fresh budget per request; see rateLimitIdentity.
+    if (typeof ip === "string" && ip.length > 0) return rateLimitIdentity(ip);
     this.logger.warn("Request with no resolvable client address; using the shared fallback bucket");
     return "unknown";
   }

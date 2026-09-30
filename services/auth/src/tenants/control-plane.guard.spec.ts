@@ -17,12 +17,16 @@ function guard(configuredKey = KEY): ControlPlaneGuard {
   return new ControlPlaneGuard({ controlPlaneApiKey: configuredKey } as AppConfig);
 }
 
-/** A context carrying one Authorization header value. */
-function context(authorization?: string | string[]): ExecutionContext {
+/**
+ * A context carrying one parsed Authorization value, and optionally the raw header lines as Node
+ * received them, which is where a repeated header is visible.
+ */
+function context(authorization?: string | string[], rawHeaders?: string[]): ExecutionContext {
   return {
     switchToHttp: () => ({
       getRequest: () => ({
         headers: authorization === undefined ? {} : { authorization },
+        ...(rawHeaders ? { raw: { rawHeaders } } : {}),
         method: "POST",
         url: "/api/tenants",
         ip: "203.0.113.9",
@@ -84,11 +88,22 @@ describe("ControlPlaneGuard", () => {
     });
 
     /**
-     * An array-valued header is refused rather than joined or picked from. Fastify hands back an array
-     * when a header appears twice, so accepting one element would let a caller send a bad key alongside
-     * a good one and have the pair treated as valid depending on read order.
+     * Two Authorization lines, the FIRST carrying the real key, modelled the way Node really delivers
+     * them: it does not produce an array, it keeps the first value and discards the rest, so the parsed
+     * header is exactly the valid key and only the raw header list shows the second. This test used to
+     * pass an array instead, a shape that never arrives, so it proved the guard refused an impossible
+     * input while a real repeat was accepted on the strength of whichever line came first.
      */
-    it("a duplicated Authorization header", () => {
+    it("two Authorization headers, even when the first is the valid key", () => {
+      const lines = ["Authorization", `Bearer ${KEY}`, "authorization", "Bearer other"];
+      expect(() => guard().canActivate(context(`Bearer ${KEY}`, lines))).toThrow(
+        ControlPlaneUnauthorizedError,
+      );
+    });
+
+    // Defensive only: no Node or Fastify version delivers an array for Authorization, but picking an
+    // element out of one would be the same mistake if an adapter ever did.
+    it("an array-valued Authorization header", () => {
       expect(() => guard().canActivate(context([`Bearer ${KEY}`, "Bearer other"]))).toThrow(
         ControlPlaneUnauthorizedError,
       );

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { TooManyRequestsError } from "@compliance-kit/common";
 import type { AppConfig } from "@compliance-kit/config";
 import type { RateLimitStore, RateLimitResult } from "../ratelimit/rate-limit.store";
-import { LoginThrottleService } from "./login-throttle.service";
+import { LoginThrottleService, LoginThrottleUnavailableError } from "./login-throttle.service";
 
 /**
  * The behaviours here are the ones that are easy to get subtly wrong and impossible to notice: a
@@ -94,6 +94,40 @@ describe("LoginThrottleService", () => {
     );
   });
 
+  /**
+   * An unreadable counter comes back from the store as ALLOWED, flagged degraded, because that is the
+   * right answer for the request tiers. These pin the opposite answer for the auth tier: were the
+   * `degraded` check removed, every one of them would fail, since the scripted result is `allowed`.
+   */
+  describe("when Redis is unreachable", () => {
+    const unreadable = result({ allowed: true, degraded: true });
+
+    it("refuses the attempt if the ACCOUNT counter cannot be read", async () => {
+      const { stub } = store({ "login:acct:": unreadable });
+      const throttle = new LoginThrottleService(stub, CONFIG);
+      await expect(throttle.assertWithinLimits(TENANT, EMAIL, IP)).rejects.toBeInstanceOf(
+        LoginThrottleUnavailableError,
+      );
+    });
+
+    it("refuses the attempt if the ADDRESS counter cannot be read", async () => {
+      const { stub } = store({ "login:addr:": unreadable });
+      const throttle = new LoginThrottleService(stub, CONFIG);
+      await expect(throttle.assertWithinLimits(TENANT, EMAIL, IP)).rejects.toBeInstanceOf(
+        LoginThrottleUnavailableError,
+      );
+    });
+
+    it("answers as an ordinary 429 with a short wait, indistinguishable to the caller", async () => {
+      const { stub } = store({ "login:acct:": unreadable, "login:addr:": unreadable });
+      const throttle = new LoginThrottleService(stub, CONFIG);
+      const refusal = await throttle.assertWithinLimits(TENANT, EMAIL, IP).catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(TooManyRequestsError);
+      expect((refusal as TooManyRequestsError).message).toBe("Too many requests. Retry later.");
+      expect((refusal as TooManyRequestsError).retryAfterSeconds).toBe(1);
+    });
+  });
+
   describe("counting", () => {
     it("charges a failure to both the account and the address", async () => {
       const { stub, consume } = store();
@@ -118,6 +152,30 @@ describe("LoginThrottleService", () => {
       const keys = reset.mock.calls.map((c) => String(c[0]));
       expect(keys.some((k) => k.startsWith("login:acct:"))).toBe(true);
       expect(keys.some((k) => k.startsWith("login:addr:"))).toBe(false);
+    });
+  });
+
+  describe("address keys", () => {
+    const addressKeyFor = async (ip: string): Promise<string | undefined> => {
+      const { stub, consume } = store();
+      await new LoginThrottleService(stub, CONFIG).recordFailure(TENANT, EMAIL, ip);
+      return consume.mock.calls.map((c) => String(c[0])).find((k) => k.startsWith("login:addr:"));
+    };
+
+    // One host is routinely handed a whole /64. Were each address its own bucket, spraying passwords
+    // across accounts from a fresh address per attempt would never reach the address limit.
+    it("count every address in one IPv6 /64 against the same budget", async () => {
+      const first = await addressKeyFor("2001:db8:1:2::1");
+      const rotated = await addressKeyFor("2001:db8:1:2:ffff:ffff:ffff:fffe");
+      expect(first).toBeDefined();
+      expect(rotated).toBe(first);
+    });
+
+    it("keep different /64s, and different IPv4 addresses, apart", async () => {
+      expect(await addressKeyFor("2001:db8:1:2::1")).not.toBe(
+        await addressKeyFor("2001:db8:1:3::1"),
+      );
+      expect(await addressKeyFor("203.0.113.7")).not.toBe(await addressKeyFor("203.0.113.8"));
     });
   });
 

@@ -341,7 +341,7 @@ one version of `fastify` for both `services/auth` and `@nestjs/platform-fastify`
 rather than trusting this sentence, which is exactly the kind of claim that goes stale. Whenever the
 floor is ahead of Nest's pin, the cost, said plainly, is that the adapter runs against a Fastify version
 its own maintainers did not pin, which is why the end-to-end smoke test matters more than usual
-here. 92 checks and `pnpm verify:claims` both pass on it.
+here. 100 checks and `pnpm verify:claims` both pass on it.
 
 **The override is the single source of truth for the Fastify version, and that has a sharp edge that
 keeps catching us:** twice on `fastify` below, then again on `fast-uri` and `js-yaml` in the

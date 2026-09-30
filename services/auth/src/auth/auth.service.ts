@@ -8,7 +8,7 @@ import {
 import { TenantContextService } from "../tenancy/tenant-context.service";
 import { PasswordService } from "./password.service";
 import { TokenService } from "./token.service";
-import { LoginThrottleService } from "./login-throttle.service";
+import { LoginThrottleService, LoginThrottleUnavailableError } from "./login-throttle.service";
 import { AuditService } from "../audit/audit.service";
 
 /** Prisma's unique-constraint violation. */
@@ -87,7 +87,16 @@ export class AuthService {
         action: "auth.login.throttled",
         actorType: "anonymous",
         sourceIp: ip,
-        metadata: { email: normaliseEmail(email) },
+        metadata: {
+          email: normaliseEmail(email),
+          // Which refusal it was. The response cannot say, and must not, but the evidence should:
+          // "somebody was guessing" and "the throttle was unreachable, so the kit failed closed" are
+          // different incidents with different follow-ups.
+          reason:
+            err instanceof LoginThrottleUnavailableError
+              ? "throttle_unavailable"
+              : "limit_exceeded",
+        },
       });
       throw err;
     }

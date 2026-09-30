@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   LocalKeyProvider,
   generateEncryptionKey,
@@ -228,5 +228,171 @@ describe("KeyRegistryService", () => {
       expect(registry.jwks()).toEqual({ keys: [] });
       registry.onModuleDestroy();
     });
+  });
+
+  /**
+   * Loading only what can be trusted, one row at a time. A registry that loads nothing when one row
+   * is bad takes authentication down with it; one that loads a row it should not have trusted gives
+   * that row's key to whoever planted it. Both are silent from the outside.
+   */
+  describe("loading", () => {
+    it("refuses a signing key whose public JWK was replaced with another key's", async () => {
+      const signing = await signingRow("active");
+      const imposter = await generateSigningKey();
+      // Everything but the key material agrees, which is what a database write can achieve without
+      // the KEK: the wrapped private key cannot be forged, the clear public JWK can.
+      signing.publicJwk = { ...imposter.publicJwk, kid: signing.kid };
+      const registry = await registryOver([signing, await encryptionRow("active")]);
+
+      expect(registry.resolvers().signing(signing.kid)).toBeUndefined();
+      expect(registry.jwks().keys).toHaveLength(0);
+      // With the only signing key refused, issuing fails loudly instead of signing with a key whose
+      // published half belongs to someone else.
+      expect(() => registry.activeMaterial()).toThrow(NoActiveKeyError);
+      registry.onModuleDestroy();
+    });
+
+    it("still loads every other key when one row cannot be unwrapped", async () => {
+      const signing = await signingRow("active");
+      const encryption = await encryptionRow("active");
+      const broken = await signingRow("retiring", new Date(Date.now() + 60_000));
+      // A flipped byte in the ciphertext fails GCM authentication, as a tampered blob or a row
+      // wrapped under a different KEK would.
+      const blob = Buffer.from(broken.wrappedKey ?? []);
+      blob[20] ^= 0xff;
+      broken.wrappedKey = blob;
+      const registry = await registryOver([broken, signing, encryption]);
+
+      expect(registry.activeMaterial().signing.kid).toBe(signing.kid);
+      expect(registry.resolvers().signing(broken.kid)).toBeUndefined();
+      registry.onModuleDestroy();
+    });
+
+    // What the JWKS serves is built from verified parts, so nothing a database write adds to the
+    // stored object (here a stray member) reaches external verifiers.
+    it("publishes the JWK the loader built, not the stored object", async () => {
+      const signing = await signingRow("active");
+      signing.publicJwk = { ...(signing.publicJwk as object), note: "added by hand" };
+      const registry = await registryOver([signing, await encryptionRow("active")]);
+      const [published] = registry.jwks().keys;
+      expect(published).toMatchObject({ kid: signing.kid, alg: "ES256", use: "sig" });
+      expect(published).not.toHaveProperty("note");
+      registry.onModuleDestroy();
+    });
+
+    it("skips a row wrapped by a key-encrypting key this process does not hold", async () => {
+      const signing = await signingRow("active");
+      const encryption = await encryptionRow("active");
+      const foreign = await encryptionRow("retiring", new Date(Date.now() + 60_000));
+      foreign.kekId = "kms:some-other-kek";
+      const registry = await registryOver([foreign, signing, encryption]);
+
+      expect(registry.resolvers().encryption(foreign.kid)).toBeUndefined();
+      expect(registry.activeMaterial().encryption.kid).toBe(encryption.kid);
+      registry.onModuleDestroy();
+    });
+  });
+});
+
+/**
+ * The refresh behaviour, which is what bounds the work an attacker's invented kid can cause: at most one
+ * reload per cooldown window, and a database outage never empties a snapshot that was working.
+ */
+describe("KeyRegistryService refresh", () => {
+  function registryWith(state: { rows: Row[]; fail: boolean; calls: number }) {
+    const cm = {
+      master: {
+        configKey: {
+          findMany: () => {
+            state.calls += 1;
+            if (state.fail) return Promise.reject(new Error("connect ECONNREFUSED"));
+            return Promise.resolve(
+              state.rows.filter((r) => r.state === "active" || r.state === "retiring"),
+            );
+          },
+        },
+      },
+    } as unknown as ConnectionManager;
+    return new KeyRegistryService({ keyEncryptionKey: KEK } as AppConfig, cm);
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("does not reload again within the cooldown, however many unknown kids arrive", async () => {
+    const state = {
+      rows: [await signingRow("active"), await encryptionRow("active")],
+      fail: false,
+      calls: 0,
+    };
+    const registry = registryWith(state);
+    await registry.onModuleInit();
+    await registry.refreshIfStale();
+    await registry.refreshIfStale();
+    expect(state.calls).toBe(1);
+    registry.onModuleDestroy();
+  });
+
+  it("keeps serving the previous snapshot when the database is unreachable", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const signing = await signingRow("active");
+    const state = { rows: [signing, await encryptionRow("active")], fail: false, calls: 0 };
+    const registry = registryWith(state);
+    await registry.onModuleInit();
+
+    state.fail = true;
+    vi.setSystemTime(Date.now() + 31_000);
+    await registry.refreshIfStale();
+
+    expect(state.calls).toBe(2);
+    expect(registry.resolvers().signing(signing.kid)).toBeDefined();
+    expect(registry.activeMaterial().signing.kid).toBe(signing.kid);
+    registry.onModuleDestroy();
+  });
+
+  it("shares one in-flight reload between concurrent callers", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const state = {
+      rows: [await signingRow("active"), await encryptionRow("active")],
+      fail: false,
+      calls: 0,
+    };
+    const registry = registryWith(state);
+    await registry.onModuleInit();
+    vi.setSystemTime(Date.now() + 31_000);
+    await Promise.all([
+      registry.refreshIfStale(),
+      registry.refreshIfStale(),
+      registry.refreshIfStale(),
+    ]);
+    expect(state.calls).toBe(2);
+    registry.onModuleDestroy();
+  });
+});
+
+describe("KeyRegistryService encryption keys", () => {
+  it("resolves the active encryption key, and loads a retiring one without making it active", async () => {
+    const active = await encryptionRow("active");
+    const retiring = await encryptionRow("retiring", new Date(Date.now() + 60_000));
+    const registry = await registryOver([await signingRow("active"), active, retiring]);
+    expect(registry.resolvers().encryption(active.kid)).toBeInstanceOf(Uint8Array);
+    expect(registry.resolvers().encryption(retiring.kid)).toBeInstanceOf(Uint8Array);
+    expect(registry.activeMaterial().encryption.kid).toBe(active.kid);
+    registry.onModuleDestroy();
+  });
+
+  it("names the missing purpose when only a signing key is active", async () => {
+    const registry = await registryOver([await signingRow("active")]);
+    expect(() => registry.activeMaterial()).toThrow(/No active token_encryption key/);
+    registry.onModuleDestroy();
+  });
+
+  it("skips a row that holds no material", async () => {
+    const signing = await signingRow("active");
+    const empty = { ...(await encryptionRow("active")), wrappedKey: null };
+    const registry = await registryOver([signing, empty]);
+    expect(registry.resolvers().encryption(empty.kid)).toBeUndefined();
+    registry.onModuleDestroy();
   });
 });

@@ -134,6 +134,9 @@ const EVIDENCE = {
     { suite: "smoke", match: "registered user's token carries no permissions" },
     { suite: "smoke", match: "permissions claim carries the seeded grants" },
     { suite: "unit", match: "services/auth/src/rbac/permissions.guard.spec.ts" },
+    // The credential an access decision rests on must be unambiguous. Node keeps only the first of
+    // two Authorization lines, so this passes only because the guard counts the raw header list.
+    { suite: "smoke", match: "two Authorization headers, the valid token first" },
   ],
 
   "Password storage (Argon2id KDF)": [
@@ -191,18 +194,30 @@ const EVIDENCE = {
     { suite: "unit", match: "services/auth/src/ratelimit/rate-limit.store.spec.ts" },
     { suite: "unit", match: "services/auth/src/auth/login-throttle.service.spec.ts" },
     { suite: "unit", match: "says nothing about which counter tripped" },
+    // The auth tier fails closed while Redis is unreachable. Both counters, because either one
+    // coming back unreadable is enough to refuse, and a check on only one would pass half of this.
+    { suite: "unit", match: "refuses the attempt if the ACCOUNT counter cannot be read" },
+    { suite: "unit", match: "refuses the attempt if the ADDRESS counter cannot be read" },
+    // Keyed on the full IPv6 address, one host holding a /64 draws a fresh budget per request.
+    { suite: "unit", match: "count every address in one IPv6 /64 against the same budget" },
   ],
 
   "Request-level DoS limits (timeouts, body size)": [
     // Asserts a 408 at roughly the configured timeout rather than accepting any quick response,
     // which is the difference between proving the timeout and proving the server is reachable.
     { suite: "slowloris", match: "server answered 408" },
+    // The other half of the row's name, which had no evidence at all: the body size limit, tested at
+    // the boundary in both directions so an off-by-one in either would show.
+    { suite: "smoke", match: "a body of exactly BODY_LIMIT_BYTES gets past the limit" },
+    { suite: "smoke", match: "a body one byte over BODY_LIMIT_BYTES is refused" },
+    { suite: "smoke", match: "an oversized body reports PAYLOAD_TOO_LARGE" },
   ],
 
   "Control-plane authorization (tenant provisioning)": [
     { suite: "smoke", match: "POST /tenants with NO credential" },
     { suite: "smoke", match: "POST /tenants with a WRONG credential" },
     { suite: "smoke", match: "POST /tenants with the key but no Bearer scheme" },
+    { suite: "smoke", match: "POST /tenants with two Authorization headers, the valid key first" },
     { suite: "smoke", match: "rejection carries the CONTROL_PLANE_UNAUTHORIZED code" },
     { suite: "smoke", match: "the rejected tenant was never created" },
     { suite: "unit", match: "services/auth/src/tenants/control-plane.guard.spec.ts" },

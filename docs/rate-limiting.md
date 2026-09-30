@@ -107,6 +107,17 @@ Fastify walks the list from the right against its trusted set.
 
 Both directions have smoke tests.
 
+### IPv6 clients are counted by /64
+
+Every per-address limit (the client-wide budget, the per-route budgets, and the login throttle's address
+counter) keys an IPv6 client on its **/64 prefix**, not its full address. One host is routinely handed a
+whole /64, so the last 64 bits cost an attacker nothing to rotate: keyed on the full address, each request
+could arrive from a fresh address with a fresh budget, and the address counter meant to stop password
+spraying would never fill. An IPv4-mapped address (`::ffff:203.0.113.7`) counts as its IPv4 form. This
+only arises behind a proxy with `TRUST_PROXY` set, since the service itself listens on IPv4, and that is
+the production shape. The trade is that clients sharing one /64 share a budget. Audit events still record
+the full address.
+
 ## Login throttling is a different control
 
 Counted on **failure only** and **cleared on success**, per account and per source address. Ten failures
@@ -128,11 +139,21 @@ merely rate-limited.
 
 ## When Redis is unreachable
 
-`RATE_LIMIT_FAIL_OPEN` decides, defaulting to **true**: serve the request.
+The two tiers answer differently, on purpose.
 
-This is a real trade, not an oversight. Failing closed turns a Redis blip into a total outage of the whole
-API, **including the login route**, which is a larger incident than the one being prevented. Failing open
-means that during a Redis outage there is no rate limiting.
+**The login throttle fails closed, always.** If either of its counters cannot be read, the attempt is
+refused before any password work: a 429 with `Retry-After: 1`, an error-level log line saying the
+throttle refused because it could not count, and an `auth.login.throttled` audit event with
+`reason: throttle_unavailable` (as against `limit_exceeded` for real guessing). Logging in is unavailable
+for the length of the outage; every other route, and every token already issued, keeps working.
+`RATE_LIMIT_FAIL_OPEN` does not change this. An attempt nobody counted is unlimited guessing, which NIST
+SP 800-63B-4 §3.2.2 requires a verifier to prevent, and the throttle is the only thing preventing it.
+
+**The request tiers** follow `RATE_LIMIT_FAIL_OPEN`, defaulting to **true**: serve the request.
+
+This is a real trade, not an oversight. Failing closed here turns a Redis blip into a total outage of the
+whole API, which is a larger incident than the one being prevented. Failing open means that during a Redis
+outage the request tiers limit nothing (the login throttle still refuses, as above).
 
 Because that is the worse compliance outcome of the two, the degradation is made **loud**:
 
@@ -156,6 +177,10 @@ before authentication, and that `/api/health` is exempt.
 A unit test proves the non-vacuity of the atomicity claim by implementing the **naive** GET-then-SET
 limiter in the test and asserting that it over-admits. Without that, a passing test of the real limiter
 would not tell you the Lua script was doing anything.
+
+The login throttle's fail-closed answer is pinned the same way: the tests script an unreadable counter
+that the store reports as **allowed**, which is what it really returns during an outage, and require a
+refusal for each counter. Remove the check and all three fail.
 
 ## Known limitations
 

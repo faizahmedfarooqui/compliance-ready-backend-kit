@@ -130,11 +130,37 @@ describe("loadConfig", () => {
     );
   });
 
-  // Sharing one value would mean a leaked operator credential also unwraps every token key.
-  it("keeps the control-plane key separate from the KEK", () => {
+  /**
+   * Sharing one value would mean a leaked operator credential also unwraps every token key.
+   *
+   * This test used to load the fixture, whose two keys are different constants, and assert that they
+   * were different. That proved the fixture and nothing else: config accepted the same value in both
+   * until the rule this now exercises existed. It tries the misconfiguration instead.
+   */
+  it("refuses the same value as both the control-plane key and the KEK", () => {
+    const shared = validEnv({ CONTROL_PLANE_API_KEY: KEK });
+    expect(() => loadConfig(shared)).toThrow(/controlPlaneApiKey/);
+    expect(() => loadConfig(shared)).toThrow(/must be different keys/);
+  });
+
+  /**
+   * Different text, same key. The last of 43 base64url characters carries two padding bits, so KEK
+   * ("A" x 43) and this alias ("A" x 42 then "B") decode to identical bytes. A text comparison let the
+   * pair through, which is exactly the reuse the rule exists to refuse.
+   */
+  it("refuses a control-plane key that is only a different spelling of the KEK", () => {
+    const alias = `${KEK.slice(0, 42)}B`;
+    expect(alias).not.toBe(KEK);
+    expect(Buffer.from(alias, "base64url").equals(Buffer.from(KEK, "base64url"))).toBe(true);
+    expect(() => loadConfig(validEnv({ CONTROL_PLANE_API_KEY: alias }))).toThrow(
+      /must be different keys/,
+    );
+  });
+
+  it("accepts the two keys when they differ", () => {
     const config = loadConfig(validEnv());
     expect(config.controlPlaneApiKey).toBe(CP_KEY);
-    expect(config.controlPlaneApiKey).not.toBe(config.keyEncryptionKey);
+    expect(config.keyEncryptionKey).toBe(KEK);
   });
 
   it("names the offending field in the error, so a bad deploy is diagnosable", () => {

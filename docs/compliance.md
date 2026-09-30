@@ -75,7 +75,7 @@ pnpm verify:claims
 ```
 
 It runs the real suites and reports every result grouped by the control it supports, with that
-control's HIPAA, PCI-DSS and SOC 2 citation next to it. Currently **51 items across the nine
+control's HIPAA, PCI-DSS and SOC 2 citation next to it. Currently **59 items across the nine
 Implemented rows**, plus one more on a Partial row: `pnpm audit` under vulnerability management,
 which is included because the part of that row which does exist is runnable, and excluded from the
 Implemented count because the row is not Implemented.
@@ -110,8 +110,8 @@ The underlying evidence, per row:
 | Access-token confidentiality | `pnpm smoke` steps 5, 6, 13 |
 | Input validation | `pnpm smoke` step 15 |
 | Append-only audit logging | `pnpm audit:immutability`, `pnpm audit:verify`, `pnpm audit:contention`, `pnpm smoke` step 18 |
-| Rate limiting and login throttling | `pnpm smoke` step 1, `pnpm test` (`rate-limit.store.spec.ts`) |
-| Request-level DoS limits | `pnpm smoke:slowloris` |
+| Rate limiting and login throttling | `pnpm smoke` step 1, `pnpm test` (`rate-limit.store.spec.ts`, `login-throttle.service.spec.ts`, including the fail-closed cases) |
+| Request-level DoS limits | `pnpm smoke:slowloris` (timeouts), `pnpm smoke` step 15 (a body of exactly `BODY_LIMIT_BYTES` passes the limit, one byte more gets 413) |
 | Control-plane authorization | `pnpm smoke` step 1 |
 
 See [testing](testing.md) for what each one actually establishes, and for the standard those checks are
