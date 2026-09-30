@@ -44,7 +44,7 @@ These seven have no fallback. The service refuses to boot without them, on purpo
 | `JWT_AUDIENCE` | The `aud` claim. Rejects a token minted for a different service that happens to share these keys |
 | `REDIS_URL` | Redis, used for rate limiting and login throttling. Must be Redis 6 or newer: the client negotiates RESP3, which needs a server that answers `HELLO` |
 | `KEY_ENCRYPTION_KEY` | The KEK that wraps every key in `config_keys`. See below |
-| `CONTROL_PLANE_API_KEY` | Bearer credential for control-plane routes. See below |
+| `CONTROL_PLANE_API_KEY` | Bearer credential for control-plane routes. Must differ from `KEY_ENCRYPTION_KEY`; the service refuses to start if they match. See below |
 
 ### The two 256-bit keys
 

@@ -130,11 +130,23 @@ describe("loadConfig", () => {
     );
   });
 
-  // Sharing one value would mean a leaked operator credential also unwraps every token key.
-  it("keeps the control-plane key separate from the KEK", () => {
+  /**
+   * Sharing one value would mean a leaked operator credential also unwraps every token key.
+   *
+   * This test used to load the fixture, whose two keys are different constants, and assert that they
+   * were different. That proved the fixture and nothing else: config accepted the same value in both
+   * until the rule this now exercises existed. It tries the misconfiguration instead.
+   */
+  it("refuses the same value as both the control-plane key and the KEK", () => {
+    const shared = validEnv({ CONTROL_PLANE_API_KEY: KEK });
+    expect(() => loadConfig(shared)).toThrow(/controlPlaneApiKey/);
+    expect(() => loadConfig(shared)).toThrow(/must be different keys/);
+  });
+
+  it("accepts the two keys when they differ", () => {
     const config = loadConfig(validEnv());
     expect(config.controlPlaneApiKey).toBe(CP_KEY);
-    expect(config.controlPlaneApiKey).not.toBe(config.keyEncryptionKey);
+    expect(config.keyEncryptionKey).toBe(KEK);
   });
 
   it("names the offending field in the error, so a bad deploy is diagnosable", () => {
