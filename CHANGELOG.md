@@ -29,7 +29,12 @@ These change what a client or an operator observes. Read them before upgrading.
   proxy with `TRUST_PROXY` set.
 - **Every response that does not set its own `Cache-Control` is `no-store`**, and all responses carry
   `X-Content-Type-Options: nosniff`. The JWKS keeps its cacheable `public, max-age=300` header.
-- **The service refuses to start when `KEY_ENCRYPTION_KEY` equals `CONTROL_PLANE_API_KEY`.**
+- **The service refuses to start when `KEY_ENCRYPTION_KEY` equals `CONTROL_PLANE_API_KEY`**, compared as decoded
+  key bytes, since two different base64url spellings can decode to one key.
+- **The restricted database role gets `SELECT` only on `config_keys`.** The service never writes that table,
+  so `packages/db/sql/restricted-role.sql` no longer grants it write access, and re-running the file over a
+  database set up by an earlier version removes it. Run `keys:init`, `keys:rotate` and `keys:revoke` as the
+  owning role, as docs/deployment.md's migrator image already does; as `crbk_app` they now fail with 42501.
 
 ### Fixed
 
@@ -37,11 +42,33 @@ These change what a client or an operator observes. Read them before upgrading.
   checked against its KEK-wrapped private key, and a mismatch keeps the key out of use, so write access to
   `config_keys` is no longer enough to substitute a verification key. Keys also load one row at a time,
   so a single row that cannot be unwrapped no longer leaves the deployment with no keys at all, and a
-  row wrapped by a key-encrypting key this process does not hold is skipped by name.
+  row wrapped by a key-encrypting key this process does not hold is skipped by name. The published JWK is
+  built from the verified key and the row's own `kid`, not copied from storage, and the `keys:decode` CLI now
+  loads keys through the same function: it had its own weaker copy that also ignored `not_after`, so it
+  could accept a token the service refused.
 - **The OpenAPI document states the real version** when the service is started as the image starts it. It
   said 0.1.0.
 - **The body-size limit has evidence.** The "Request-level DoS limits (timeouts, body size)" row had none
-  for its second half; the smoke suite now proves a 413 one byte over `BODY_LIMIT_BYTES`.
+  for its second half; the smoke suite now tests the boundary in raw bytes: exactly `BODY_LIMIT_BYTES`
+  passes the limit and one byte more gets 413.
+- **Two HIPAA citations were missing.** Password storage now cites 164.308(a)(5)(ii)(D), Password
+  management, and login throttling 164.308(a)(5)(ii)(C), Log-in monitoring. Both are procedural
+  specifications the kit supports rather than satisfies. The old text said HIPAA names no password
+  safeguard, which the regulation contradicts.
+- **Key revocation is described as what it does.** It removes the wrapped material from the live row.
+  Copies in old row versions, WAL, replicas and backups remain, still wrapped by the KEK, until they age
+  out; docs/key-management.md says what that means where a standard requires key destruction.
+- **The prerequisite is pnpm 11**, installed by `corepack enable`, not pnpm 9. A pnpm older than 10.5 does not
+  read `pnpm-workspace.yaml` and installs without the security overrides.
+
+### Dependencies
+
+- **Security releases taken:** fastify 5.12.5, @fastify/static 10.1.4, and NestJS 12.1.1, whose adapter fixes
+  a path-scoped middleware bypass and brings in @fastify/middie 9.3.4. None was reachable as configured,
+  and SECURITY.md records why for each. Override floors for fast-uri, js-yaml, brace-expansion and
+  find-my-way now sit at the versions actually resolved.
+- **dotenv 18**, a major. It drops `-r dotenv/config` preloading and `.env.vault` support. The kit uses neither;
+  a project built on it that does needs `dotenv run -- <command>` instead.
 
 ### Verification
 

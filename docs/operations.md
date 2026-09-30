@@ -44,7 +44,7 @@ Every command, and the runbooks for the things you will actually need to do.
 | `pnpm keys:init` | Bootstrap a deployment: one signing key, one encryption key |
 | `pnpm keys:rotate --purpose signing\|encryption` | New active key, previous one retires |
 | `pnpm keys:list` | Every key, status, and overlap window |
-| `pnpm keys:revoke --kid <kid> --reason "…"` | Revoke and destroy material |
+| `pnpm keys:revoke --kid <kid> --reason "…"` | Revoke, removing the material from the row |
 | `pnpm keys:decode <token>` | Fully verify a token, then print claims and headers |
 
 ### Audit
@@ -120,7 +120,7 @@ the new key on its own. Tokens signed by the old key keep verifying until its `n
 `now + accessTtl + clockTolerance`.
 
 **Do not revoke the retiring key before that timestamp.** Tokens still in the wild reference it, and
-revoking destroys the material. Revoking the **active** key is refused outright, because it would leave the
+revoking removes the material, so they stop verifying. Revoking the **active** key is refused outright, because it would leave the
 service unable to issue anything.
 
 ### Verify an audit chain

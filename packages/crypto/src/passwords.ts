@@ -20,9 +20,10 @@ import * as argon2 from "argon2";
  * upgraded transparently on next successful login, see `needsRehash`.
  *
  * PCI-DSS 8.3.2 is the direct control (strong cryptography renders all authentication
- * factors unreadable in storage and transmission). HIPAA names no password-storage
- * safeguard; the nearest standard is 164.312(d) (Person or entity authentication).
- * SOC 2 CC6.1 covers it under logical access.
+ * factors unreadable in storage and transmission). HIPAA's is 164.308(a)(5)(ii)(D), Password
+ * management (Addressable): "Procedures for creating, changing, and safeguarding passwords",
+ * a procedural specification this supports rather than satisfies; 164.312(d) (Person or entity
+ * authentication) is the related technical standard. SOC 2 CC6.1 covers it under logical access.
  */
 export const ARGON2_OPTIONS: argon2.HashOptions = {
   type: argon2.argon2id,

@@ -184,13 +184,17 @@ No route matches that method and path.
 
 `METHOD_NOT_ALLOWED` · **405**
 
-The path exists but does not accept that method.
+Reserved: the kit does not send this today. A request whose path exists but whose method does not gets
+404 `ROUTE_NOT_FOUND` instead, because Fastify's router matches method and path together. The entry exists
+so the type URI resolves if a handler ever raises a 405, since the filter maps that status to this code.
 
 ### `not-acceptable`
 
 `NOT_ACCEPTABLE` · **406**
 
-No representation available that satisfies the request's `Accept` header.
+Reserved: the kit does not send this today, since no route negotiates its representation on `Accept`.
+The entry exists so the type URI resolves if a handler ever raises a 406, since the filter maps that
+status to this code.
 
 ### `payload-too-large`
 

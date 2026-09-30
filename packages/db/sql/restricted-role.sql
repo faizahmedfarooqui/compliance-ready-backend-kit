@@ -78,7 +78,8 @@ $$;
 GRANT USAGE ON SCHEMA public TO crbk_app;
 
 -- ---------------------------------------------------------------------------
--- The ordinary tables: full DML, because the service legitimately mutates them.
+-- The ordinary tables: the DML the service needs. Full DML where it mutates a table; config_keys,
+-- which it only reads, gets SELECT alone (see below).
 --
 -- Listed one by one rather than with GRANT ... ON ALL TABLES, and that is the entire point of this
 -- file. `ON ALL TABLES` would include audit_events and hand it UPDATE and DELETE, producing a setup
@@ -97,11 +98,18 @@ BEGIN
   IF to_regclass('public.global_config') IS NOT NULL THEN
     GRANT SELECT, INSERT, UPDATE, DELETE ON public.global_config TO crbk_app;
   END IF;
-  -- config_keys holds WRAPPED key material. The service reads it on every registry refresh and writes
-  -- it during rotation, so DML is required; the protection on this table is the KEK, the CHECK
-  -- constraints and the partial unique index, not the grant.
+  -- config_keys holds WRAPPED key material, and the service only ever READS it: every registry refresh
+  -- loads it and nothing in the request path writes it. Creating, rotating and revoking keys is the
+  -- operator CLIs' job (`pnpm keys:*`), which docs/deployment.md runs from the migrator image as the
+  -- owning role. So SELECT is all this role gets. An earlier version granted full DML on the belief that
+  -- the service writes the table during rotation; it never has. Write access would let a compromised
+  -- service delete the deployment's keys or plant rows of its own, and the KEK does not cover everything
+  -- in a row (the public JWK is stored in the clear), so the grant is part of the defence, not a formality.
+  -- The REVOKE makes re-running this file over a database set up by that earlier version take the write
+  -- privileges away rather than leave them in place.
   IF to_regclass('public.config_keys') IS NOT NULL THEN
-    GRANT SELECT, INSERT, UPDATE, DELETE ON public.config_keys TO crbk_app;
+    GRANT SELECT ON public.config_keys TO crbk_app;
+    REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.config_keys FROM crbk_app;
   END IF;
 
   -- Tenant (data plane).

@@ -52,8 +52,8 @@ in one maintenance window.
 - **A CHECK constraint pairs purpose to algorithm.** Without it, `token_signing` + `A256KW` would hand 32
   raw bytes to a signature check.
 - **A CHECK requires a public JWK for asymmetric keys** and refuses one for symmetric keys.
-- **A CHECK refuses a `revoked` row that still holds material.** Revocation destroys the key or it is not
-  revocation.
+- **A CHECK refuses a `revoked` row that still holds material.** A revoked key keeps no material in its row,
+  or it is not revocation. What that does and does not erase is covered under rotation below.
 
 Each of these was verified by trying to violate it, which is the only way to know a constraint is doing
 anything.
@@ -112,7 +112,15 @@ are still legitimately valid; absent means the overlap never ends and a compromi
 forever.
 
 Revoking the **active** key is refused, because it would leave the service unable to issue tokens at all.
-Revoking a retiring key is allowed and destroys its material.
+Revoking a retiring key is allowed and removes its wrapped material from the row, which the CHECK
+constraint then keeps empty.
+
+**What revocation does not erase.** Postgres never overwrites a row in place. The previous version, wrapped
+key included, stays on disk until VACUUM reclaims it, and copies persist in WAL archives, replicas and
+backups for as long as those are kept. Every copy is still wrapped by the KEK, so recovering the key takes a
+copy and the KEK together. For a key revoked because it was compromised that rarely matters, since the key
+is already out. Where a standard requires the key material itself to be destroyed, count backup retention
+in, because until those copies age out it has not been.
 
 CI exercises rotation and revocation against real Postgres, including asserting that revoking the active
 key fails, because what makes rotation correct is the database constraints rather than the code.
