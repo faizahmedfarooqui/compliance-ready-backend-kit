@@ -117,6 +117,28 @@ describe("loadStoredKey", () => {
       ).rejects.toThrow(/must be 32 bytes/);
     });
 
+    it("an encryption row whose algorithm does not match its purpose", async () => {
+      const row = await encryptionRow();
+      row.algorithm = "ES256";
+      await expect(loadStoredKey(provider, row)).rejects.toThrow(/must be A256KW/);
+    });
+
+    it("a purpose the registry does not know", async () => {
+      const row = await encryptionRow();
+      row.purpose = "token_other";
+      await expect(loadStoredKey(provider, row)).rejects.toThrow(/unknown key purpose/);
+    });
+
+    it.each([
+      ["missing", null],
+      ["an array", []],
+      ["a string", "not a jwk"],
+    ])("a signing row whose public JWK is %s", async (_label, publicJwk) => {
+      const row = await signingRow();
+      row.publicJwk = publicJwk;
+      await expect(loadStoredKey(provider, row)).rejects.toThrow(/has no public JWK/);
+    });
+
     it("a row with no material", async () => {
       const row = await signingRow();
       row.wrappedKey = null;

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   LocalKeyProvider,
   generateEncryptionKey,
@@ -291,5 +291,108 @@ describe("KeyRegistryService", () => {
       expect(registry.activeMaterial().encryption.kid).toBe(encryption.kid);
       registry.onModuleDestroy();
     });
+  });
+});
+
+/**
+ * The refresh behaviour, which is what bounds the work an attacker's invented kid can cause: at most one
+ * reload per cooldown window, and a database outage never empties a snapshot that was working.
+ */
+describe("KeyRegistryService refresh", () => {
+  function registryWith(state: { rows: Row[]; fail: boolean; calls: number }) {
+    const cm = {
+      master: {
+        configKey: {
+          findMany: () => {
+            state.calls += 1;
+            if (state.fail) return Promise.reject(new Error("connect ECONNREFUSED"));
+            return Promise.resolve(
+              state.rows.filter((r) => r.state === "active" || r.state === "retiring"),
+            );
+          },
+        },
+      },
+    } as unknown as ConnectionManager;
+    return new KeyRegistryService({ keyEncryptionKey: KEK } as AppConfig, cm);
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("does not reload again within the cooldown, however many unknown kids arrive", async () => {
+    const state = {
+      rows: [await signingRow("active"), await encryptionRow("active")],
+      fail: false,
+      calls: 0,
+    };
+    const registry = registryWith(state);
+    await registry.onModuleInit();
+    await registry.refreshIfStale();
+    await registry.refreshIfStale();
+    expect(state.calls).toBe(1);
+    registry.onModuleDestroy();
+  });
+
+  it("keeps serving the previous snapshot when the database is unreachable", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const signing = await signingRow("active");
+    const state = { rows: [signing, await encryptionRow("active")], fail: false, calls: 0 };
+    const registry = registryWith(state);
+    await registry.onModuleInit();
+
+    state.fail = true;
+    vi.setSystemTime(Date.now() + 31_000);
+    await registry.refreshIfStale();
+
+    expect(state.calls).toBe(2);
+    expect(registry.resolvers().signing(signing.kid)).toBeDefined();
+    expect(registry.activeMaterial().signing.kid).toBe(signing.kid);
+    registry.onModuleDestroy();
+  });
+
+  it("shares one in-flight reload between concurrent callers", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const state = {
+      rows: [await signingRow("active"), await encryptionRow("active")],
+      fail: false,
+      calls: 0,
+    };
+    const registry = registryWith(state);
+    await registry.onModuleInit();
+    vi.setSystemTime(Date.now() + 31_000);
+    await Promise.all([
+      registry.refreshIfStale(),
+      registry.refreshIfStale(),
+      registry.refreshIfStale(),
+    ]);
+    expect(state.calls).toBe(2);
+    registry.onModuleDestroy();
+  });
+});
+
+describe("KeyRegistryService encryption keys", () => {
+  it("resolves the active encryption key, and loads a retiring one without making it active", async () => {
+    const active = await encryptionRow("active");
+    const retiring = await encryptionRow("retiring", new Date(Date.now() + 60_000));
+    const registry = await registryOver([await signingRow("active"), active, retiring]);
+    expect(registry.resolvers().encryption(active.kid)).toBeInstanceOf(Uint8Array);
+    expect(registry.resolvers().encryption(retiring.kid)).toBeInstanceOf(Uint8Array);
+    expect(registry.activeMaterial().encryption.kid).toBe(active.kid);
+    registry.onModuleDestroy();
+  });
+
+  it("names the missing purpose when only a signing key is active", async () => {
+    const registry = await registryOver([await signingRow("active")]);
+    expect(() => registry.activeMaterial()).toThrow(/No active token_encryption key/);
+    registry.onModuleDestroy();
+  });
+
+  it("skips a row that holds no material", async () => {
+    const signing = await signingRow("active");
+    const empty = { ...(await encryptionRow("active")), wrappedKey: null };
+    const registry = await registryOver([signing, empty]);
+    expect(registry.resolvers().encryption(empty.kid)).toBeUndefined();
+    registry.onModuleDestroy();
   });
 });
