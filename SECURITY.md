@@ -90,9 +90,16 @@ matching entry below, with the reasoning and what would make us revisit it.
 
 ### Accepted advisories
 
-| Advisory | Package | Why accepted | Revisit when |
-| --- | --- | --- | --- |
-| [GHSA-mh99-v99m-4gvg](https://github.com/advisories/GHSA-mh99-v99m-4gvg) | `brace-expansion` 1.1.16 / 2.1.2 | Denial of service via unbounded expansion. **Not in the production dependency closure** (`pnpm why --prod` returns nothing): it reaches us only through ESLint's tooling, so the exposure is a developer's own build. The fix exists only in 5.0.8, and 1.1.16 and 2.1.2 are already the newest releases on those major lines, so there is nothing to upgrade to without a breaking major bump of the consumers. | A patched 1.x or 2.x is published, or the consuming tooling moves to 5.x. |
+**None, as of 2026-09-30.** When one is needed, add a row here giving the advisory, the package and
+version, why it is accepted, and what would make us revisit it, and add its id to `ignoreGhsas`.
+
+The last entry was [GHSA-mh99-v99m-4gvg](https://github.com/advisories/GHSA-mh99-v99m-4gvg), denial
+of service via unbounded expansion in `brace-expansion`, accepted because the fix existed only in 5.0.8
+while 1.1.16 was the newest 1.x release. Its own revisit condition ("a patched 1.x or 2.x is published")
+then came true without anyone noticing: the advisory lists 1.1.17 as patched, and the 1.x floor has
+been 1.1.18 since 2026-08-06. It was removed from `ignoreGhsas` on 2026-09-30 rather than left in
+place, because an exception that outlives its reason stops recording a decision and starts hiding a
+regression: anything that pulled a vulnerable 1.x back into the tree would have passed the gate.
 
 ### Fixed rather than accepted
 
@@ -154,28 +161,8 @@ reports no known vulnerabilities, and `pnpm test`, `pnpm typecheck`, `pnpm lint`
 when** `@prisma/config` declares `deepmerge-ts` 8 or later, at which point this entry and its override
 should be deleted rather than left to rewrite a version nobody asks for.
 
-### Install scripts are denied by default
-
-`pnpm-workspace.yaml` carries an `allowBuilds` map, and anything absent from it is denied.
-`strictDepBuilds` defaults to true, so an install that encounters an unreviewed build script
-**fails** rather than warning. Four dependencies declare one; three are allowed and one is not:
-
-| Package | Allowed | Why |
-| --- | --- | --- |
-| `argon2` | yes | Native module, compiled or resolved by `node-gyp-build`. Password hashing does not work without it. |
-| `prisma` | yes | `preinstall` entry point. |
-| `@prisma/engines` | yes | `postinstall` places the query and schema engines. |
-| `@scarf/scarf` | **no** | `postinstall` runs `node ./report.js`, which is install telemetry. Listed explicitly as `false` rather than merely omitted, so the intent is on the record: nothing here phones home on install. |
-
-**This is the control CVE-2025-54313 actually needed.** The malicious `eslint-config-prettier`
-releases carried their payload in an install script, not in the linter's own code, so no amount
-of care about which linter to use would have helped. Denying scripts by default would have.
-
-Note what it does not do: it stops a package from executing at install time, not from being
-malicious when imported. A compromised library that your code calls still runs.
-
 The 2026-09-16 pass came back with eleven findings across seven advisories, and the shape of it
-is the reason the warning two paragraphs below exists.
+is the reason for the warning at the end of this section.
 
 `fast-uri` ([GHSA-5jgf-p345-68v8](https://github.com/advisories/GHSA-5jgf-p345-68v8),
 [GHSA-f65p-4m7j-42xc](https://github.com/advisories/GHSA-f65p-4m7j-42xc),
@@ -198,14 +185,89 @@ never executed here**. Fixed anyway with `mysql2@3: ^3.24.4`, on the same reason
 above: an accurate dependency inventory is worth more than an argument about reachability, and
 the next person to add a MySQL adapter should inherit a patched version rather than that argument.
 
-**The operational lesson, since this is now the second time it has bitten.** Raising a dependency
-is not enough when that dependency is overridden; the override is the real version. After any
-advisory on an overridden package, raise the floor here and confirm by resolution, not by the
-`package.json` entry.
+The 2026-09-30 pass came back with nine findings across six advisories, all published on
+2026-09-29, the day after the last green scheduled run. Nothing on our side had changed.
+
+`fast-uri` ([GHSA-hrr3-gc8f-f4qj](https://github.com/advisories/GHSA-hrr3-gc8f-f4qj),
+[GHSA-jvvf-x445-j334](https://github.com/advisories/GHSA-jvvf-x445-j334), patched `>=4.1.5`, and
+`>=3.1.8` for the first) is in the production path, since Fastify's validation and serialisation both
+run through it. The 3.x line was already on 3.1.8. The 4.x line was on 4.1.4, and should not have
+been: the 2026-09-16 pass above had resolved 4.1.5, then Dependabot's grouped update #55, merged the
+same day, regenerated the lockfile and moved it back to 4.1.4. The `^4.1.3` floor permitted that, no
+advisory covered 4.1.4 yet, and nothing looks for a downgrade, so nothing noticed.
+
+`js-yaml` ([GHSA-r3ph-w7gj-g6xm](https://github.com/advisories/GHSA-r3ph-w7gj-g6xm), patched `>=5.4.1`)
+was the override working backwards. `@nestjs/swagger` 12.0.1 declares `js-yaml` 5.4.1 exactly, which
+is the patched version, and the `^5.2.2` override rewrote that into a range the locked 5.3.0 already
+satisfied. Without the override we would not have been exposed at all. `find-my-way` had the same
+shape with no advisory attached: `@nestjs/platform-fastify` declares 9.9.0, the `^9.7.0` override held
+it at 9.7.0, and two copies of the router shipped, 9.9.0 under Fastify and 9.7.0 under the adapter.
+
+`brace-expansion` ([GHSA-qhr7-859c-m2p7](https://github.com/advisories/GHSA-qhr7-859c-m2p7) and
+[GHSA-6j4f-fj2g-mc7p](https://github.com/advisories/GHSA-6j4f-fj2g-mc7p), both high, and
+[GHSA-q2hr-2g5m-vwhr](https://github.com/advisories/GHSA-q2hr-2g5m-vwhr); `>=1.1.21` and `>=5.0.12`
+are patched for all three) reaches us only through ESLint and the Nest CLI, and was fixed on the same
+reasoning as `mysql2`.
+
+The same pass read the request-path packages' own repository advisories, which the gate cannot see,
+and found two more affecting `main` that are in neither the global database nor `pnpm audit`'s output:
+[GHSA-9c5c-9qcx-q35q](https://github.com/nestjs/nest/security/advisories/GHSA-9c5c-9qcx-q35q) (high,
+2026-09-15), a path-scoped middleware bypass through absolute-form request targets in
+`@nestjs/platform-fastify` `>=12.0.0 <12.0.2`, and
+[GHSA-r799-r9gc-m956](https://github.com/fastify/fastify-static/security/advisories/GHSA-r799-r9gc-m956)
+(moderate, 2026-09-17), a route guard and `allowedPath` bypass on case-insensitive filesystems in
+`@fastify/static` below 10.1.4. Neither is reachable here as configured: the service applies no
+path-scoped middleware at all, since authentication and authorization are guards, and `@fastify/static`
+is used only by `@nestjs/swagger` to serve its own UI assets, and only when `API_DOCS_ENABLED` is set.
+Both are fixed by the Nest 12.1.1 and `@fastify/static` 10.1.5 updates taken in the same change.
+Nest 12.1.1 also brings in a runtime dependency that 12.0.1 did not have, `@fastify/middie`, which
+the adapter registers on every request; it arrives at 9.3.4, the release that fixes its own half of
+the same bug ([GHSA-hx87-8wv7-pjv8](https://github.com/fastify/middie/security/advisories/GHSA-hx87-8wv7-pjv8),
+critical), and it has had three critical advisories this year, so it is on the list of repositories
+the dependency pass now reads directly.
+
+**Fixed by setting every floor to the version that resolution produced and the suites were run
+against, not to the lowest version an advisory calls patched**: `fast-uri@4` 4.2.1, `fast-uri@3`
+3.1.8, `js-yaml@5` 5.4.2 (what `@nestjs/swagger` 12.0.2 itself declares), `brace-expansion@1` 1.1.21,
+`brace-expansion@5` 5.0.12, `find-my-way@9` 9.9.0 (what the adapter declares), `fastify@5` 5.12.5, and
+`deepmerge-ts@7` 8.0.2, which had the same slack as `fast-uri` without yet having been caught by it.
+`fast-uri` 4.2.0 and 4.2.1 are bug-fix releases from the Fastify maintainers, inside the `^4.0.0` that
+Fastify declares, and a fresh install of Fastify resolves them anyway. Verified by resolution (one
+version per overridden major), `pnpm audit` reporting no known vulnerabilities with `ignoreGhsas`
+empty, and at runtime: the 92-check smoke suite, the slowloris probe, both audit probes against the
+master chain and a freshly provisioned tenant, and the API docs UI served through `@fastify/static`.
+
+**The operational lesson, now learned three ways.** Raising a dependency is not enough when that
+dependency is overridden; the override is the real version. After any advisory on an overridden
+package, raise the floor here and confirm by resolution, not by the `package.json` entry. Set the floor
+to the version resolution produced, because a floor below it lets the next lockfile rewrite slide back
+down inside the range without any check noticing. And when a consumer starts declaring a version at or
+above the floor by itself, check whether the override is holding it back: `js-yaml` and `find-my-way`
+were both pinned below what the packages that use them ask for.
+
+### Install scripts are denied by default
+
+`pnpm-workspace.yaml` carries an `allowBuilds` map, and anything absent from it is denied.
+`strictDepBuilds` defaults to true, so an install that encounters an unreviewed build script
+**fails** rather than warning. Four dependencies declare one; three are allowed and one is not:
+
+| Package | Allowed | Why |
+| --- | --- | --- |
+| `argon2` | yes | Native module, compiled or resolved by `node-gyp-build`. Password hashing does not work without it. |
+| `prisma` | yes | `preinstall` entry point. |
+| `@prisma/engines` | yes | `postinstall` places the query and schema engines. |
+| `@scarf/scarf` | **no** | `postinstall` runs `node ./report.js`, which is install telemetry. Listed explicitly as `false` rather than merely omitted, so the intent is on the record: nothing here phones home on install. |
+
+**This is the control CVE-2025-54313 actually needed.** The malicious `eslint-config-prettier`
+releases carried their payload in an install script, not in the linter's own code, so no amount
+of care about which linter to use would have helped. Denying scripts by default would have.
+
+Note what it does not do: it stops a package from executing at install time, not from being
+malicious when imported. A compromised library that your code calls still runs.
 
 ### One override that is not an advisory fix
 
-`"fastify@5": "^5.12.1"` began as version alignment rather than remediation, and is recorded here so
+`"fastify@5"` began as version alignment rather than remediation, and is recorded here so
 every entry in `overrides` has a reason attached. It has since become both.
 
 **Why it exists.** `@nestjs/platform-fastify` depends on `fastify` EXACTLY, not by range, so the
@@ -216,7 +278,9 @@ which is a small instance of the skew that keeps `@types/node` majors pinned. Th
 both to one version.
 
 **Nest's pin moves, so the gap changes rather than closes.** 11.1.28 pinned `5.10.0`, which is what
-made the original skew glaring; 11.2.1 pins `5.11.3`. Do not assume the two are still far apart, and
+made the original skew glaring; 11.2.1 pinned `5.11.3`, 12.0.1 pinned `5.12.1`, and 12.1.1 pins
+`5.12.5`, which as of 2026-09-30 is exactly the override's floor, so for the moment the override
+neither holds Fastify back nor pushes it forward. Do not assume the two are still far apart, and
 do not assume they have converged either: check, because the answer decides whether the override is
 holding Fastify back or pushing it forward.
 
@@ -244,16 +308,41 @@ advisories not yet published to the global database, so the gate reported "No kn
 found" against a version affected by two of them. The gate is a floor, not a ceiling: reading the
 release notes of anything in the request path is not optional just because the audit is green.
 
+**Every Fastify security release since has arrived the same way, and the record is kept because it
+is not flattering.** 5.12.2 fixed four high-severity advisories, published 2026-09-04:
+[GHSA-667r-xxjv-c9mm](https://github.com/fastify/fastify/security/advisories/GHSA-667r-xxjv-c9mm)
+(request body replacement through an `$async` validation result),
+[GHSA-p68q-wchp-6fh7](https://github.com/fastify/fastify/security/advisories/GHSA-p68q-wchp-6fh7)
+(malformed URLs reaching another plugin's not-found handler),
+[GHSA-hwr6-493r-vm6h](https://github.com/fastify/fastify/security/advisories/GHSA-hwr6-493r-vm6h)
+(a boolean `false` schema skipped rather than enforced) and
+[GHSA-9q9j-q6p8-xq58](https://github.com/fastify/fastify/security/advisories/GHSA-9q9j-q6p8-xq58)
+(header schema `dependencies` never matching lowercased headers). 5.12.5 fixed
+[GHSA-4mh8-r7rc-xpvc](https://github.com/fastify/fastify/security/advisories/GHSA-4mh8-r7rc-xpvc)
+(moderate, 2026-09-16), a denial of service through an unhandled exception on HTTP/2 trailer
+responses. As of 2026-09-30 **none of the five is in the global advisory database that `pnpm audit`
+reads**, so the gate has never reported any of them. The lockfile held 5.12.1 from 2026-08-28 to
+2026-09-16, so `main` ran a Fastify affected by all four high advisories for twelve days, and it left
+5.12.1 through a routine Dependabot group (#55) rather than because anyone had seen them. **None was
+reachable here as configured**, checked afterwards rather than assumed: three need a Fastify route
+schema (an `$async` one, a `false` one, or a header schema using `dependencies`), and no route declares
+any schema, since validation is class-validator DTOs through Nest's pipe; the fourth matters where a
+not-found handler serves protected data, and this kit registers none of its own, so an unmatched
+route gets the generic 404 problem body. The HTTP/2 one needs the adapter created with `http2`, which
+it is not. What would have caught them in time is reading Fastify's security advisories directly, which
+is now part of every pass.
+
 **Verified by resolution**, the way the `find-my-way` override was: `pnpm why fastify -r` reports
 one version of `fastify` for both `services/auth` and `@nestjs/platform-fastify`. That version was
-5.12.1 when this entry was written and is **5.12.4** as of 2026-09-16; re-run the commands below
-rather than trusting this sentence, which is exactly the kind of claim that goes stale. The cost, said plainly, is that the adapter runs against a Fastify version
+5.12.1 when this entry was written and is **5.12.5** as of 2026-09-30; re-run the commands below
+rather than trusting this sentence, which is exactly the kind of claim that goes stale. Whenever the
+floor is ahead of Nest's pin, the cost, said plainly, is that the adapter runs against a Fastify version
 its own maintainers did not pin, which is why the end-to-end smoke test matters more than usual
 here. 92 checks and `pnpm verify:claims` both pass on it.
 
 **The override is the single source of truth for the Fastify version, and that has a sharp edge that
 keeps catching us:** twice on `fastify` below, then again on `fast-uri` and `js-yaml` in the
-2026-09-16 pass above. An override range is not a floor that drifts upward. `^5.11.0` is
+2026-09-16 pass above, and on `fast-uri`, `js-yaml` and `find-my-way` in the 2026-09-30 one. An override range is not a floor that drifts upward. `^5.11.0` is
 satisfied by 5.11.0, so when Dependabot bumped `services/auth` to `^5.11.3`, `pnpm install` left the
 lockfile on 5.11.0 and the "upgrade" changed nothing; `^5.11.3` then did the same to the `^5.12.0`
 bump. A bump that appears to land and does nothing is worse than one that fails, because CI stays
