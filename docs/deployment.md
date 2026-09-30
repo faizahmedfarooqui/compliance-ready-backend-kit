@@ -123,6 +123,15 @@ provision, since whoever creates the tables owns them.
 Then point the service's `MASTER_DATABASE_URL` and `TENANT_CLUSTER_URL` at `crbk_app` rather than at
 the owner.
 
+**`crbk_app` can read `config_keys` but not write it**, because the service never writes it. So the key
+commands (`keys:init`, `keys:rotate`, `keys:revoke`) run as the owning role, which is how the migrator
+image runs them in the sequence above; run one as `crbk_app` and it fails with `42501`. Write access
+there would let a compromised service delete the deployment's keys or plant rows of its own, and the KEK
+does not cover the whole row, since the public JWK is stored in the clear. Checked against a scratch
+database: as `crbk_app`, `SELECT` on `config_keys` succeeds and `INSERT`, `UPDATE` and `DELETE` fail with
+`permission denied`. An earlier version of the file granted full DML on this table; re-running the current
+one over a database it set up takes those privileges away.
+
 **Verified, not asserted.** Connected as `crbk_app` against a database provisioned by the container:
 
 | Statement on `audit_events` | Result |
