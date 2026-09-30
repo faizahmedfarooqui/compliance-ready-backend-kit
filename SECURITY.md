@@ -218,7 +218,10 @@ and found two more affecting `main` that are in neither the global database nor 
 (moderate, 2026-09-17), a route guard and `allowedPath` bypass on case-insensitive filesystems in
 `@fastify/static` below 10.1.4. Neither is reachable here as configured: the service applies no
 path-scoped middleware at all, since authentication and authorization are guards, and `@fastify/static`
-is used only by `@nestjs/swagger` to serve its own UI assets, and only when `API_DOCS_ENABLED` is set.
+is used only by `@nestjs/swagger`, which registers it over the public `swagger-ui-dist` assets with no
+`allowedPath` and no route guard, so the case-folding bypass has no restriction to get around. It is
+served by default, since `API_DOCS_ENABLED` defaults to on; turning it off in production, as
+[configuration](docs/configuration.md) recommends, removes it from the request path entirely.
 Both are fixed by the Nest 12.1.1 and `@fastify/static` 10.1.5 updates taken in the same change.
 Nest 12.1.1 also brings in a runtime dependency that 12.0.1 did not have, `@fastify/middie`, which
 the adapter registers on every request; it arrives at 9.3.4, the release that fixes its own half of
