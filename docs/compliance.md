@@ -58,10 +58,12 @@ data, the PCI column is not a requirement you inherit. Scoping is the first ques
 **SOC 2 criteria are not a checklist.** The Trust Services Criteria describe objectives; a control is
 evaluated on whether it meets the objective in your environment, which a code repository cannot determine.
 
-**Some rows have no HIPAA mapping on purpose.** Rate limiting and DoS protection are marked "(none, see
-notes)" rather than being stretched onto a technical safeguard that does not cover them. HIPAA handles
-availability through the contingency-planning administrative safeguards. Inventing a citation to fill a
-cell is how a mapping stops being trustworthy.
+**Some rows have no HIPAA mapping on purpose.** DoS protection and the request-level limits are marked
+"(none, see notes)" rather than being stretched onto a technical safeguard that does not cover them. HIPAA
+handles availability through the contingency-planning administrative safeguards. Inventing a citation to
+fill a cell is how a mapping stops being trustworthy. The converse holds too: login throttling is mapped
+to 164.308(a)(5)(ii)(C) (Log-in monitoring), because leaving a real specification out understates the kit
+in the same way an invented one overstates it.
 
 **Where a citation is uncertain, the table says so.** Several PCI references carry "unverified". That is a
 deliberate admission that the mapping is the author's reading rather than a QSA's.

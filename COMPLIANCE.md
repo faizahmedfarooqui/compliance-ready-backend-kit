@@ -32,7 +32,7 @@ registered for it, which is how this file is kept from drifting ahead of the cod
 | --- | --- | --- | --- | --- |
 | Multi-tenant isolation (database-per-tenant) | **Implemented** | 164.312(a)(1) | Req 7 | CC6.1 |
 | RBAC / access control | **Implemented** | 164.312(a)(1); 164.312(a)(2)(i); 164.308(a)(4) | Req 7 | CC6.3 |
-| Password storage (Argon2id KDF) | **Implemented** | 164.312(d) | Req 8 (8.3.2) | CC6.1 |
+| Password storage (Argon2id KDF) | **Implemented** | 164.308(a)(5)(ii)(D); 164.312(d) | Req 8 (8.3.2) | CC6.1 |
 | Access-token confidentiality (nested JWT: signed, then encrypted) | **Implemented** | 164.308(a)(1)(ii)(B) | Req 6 (6.2.4); Req 12 (12.3.3) | CC6.1 |
 | Input validation | **Implemented** | 164.312(c)(1) | Req 6 (6.2.4) | CC8.1 |
 | Vulnerability / dependency management | Partial | 164.308(a)(8); 164.308(a)(5)(ii)(B) | Req 6 (6.3.1-6.3.3); Req 11 (11.3) | CC7.1 |
@@ -42,7 +42,7 @@ registered for it, which is how this file is kept from drifting ahead of the cod
 | Key management (envelope encryption, rotation, JWKS) | Partial | 164.312(a)(2)(iv) | Req 3 (3.6, 3.7, unverified) | CC6.1 |
 | Encryption at rest | **Not implemented** | 164.312(a)(2)(iv) | Req 3 (3.5, 3.5.1) | CC6.1 |
 | Encryption in transit (TLS) | **Not implemented here** | 164.312(e)(1); 164.312(e)(2)(ii) | Req 4 (4.2.1) | CC6.7 |
-| Rate limiting and login throttling (application layer) | **Implemented** | (none, see notes) | Req 8 (8.3.4, unverified) | CC6.6 |
+| Rate limiting and login throttling (application layer) | **Implemented** | 164.308(a)(5)(ii)(C) (login throttling; see notes) | Req 8 (8.3.4, unverified) | CC6.6 |
 | DoS / DDoS protection (network layer) | **Not implemented here** | (none, see notes) | Req 6 (6.4.2, unverified) | CC6.6 |
 | Request-level DoS limits (timeouts, body size) | **Implemented** | (none, see notes) | (none, see notes) | CC6.6 |
 | Control-plane authorization (tenant provisioning) | **Implemented** | 164.312(a)(1); 164.308(a)(4) | Req 7 | CC6.3 |
@@ -186,10 +186,14 @@ registered for it, which is how this file is kept from drifting ahead of the cod
 - **Authentication.** PCI 8.4/8.5 mandate MFA into the CDE; some sub-requirements became
   mandatory 31 Mar 2025. Phishing-resistant passkeys exceed the baseline.
 - **Password storage.** PCI 8.3.2 is the direct control (strong cryptography renders all
-  authentication factors unreadable in storage and transmission). HIPAA names no
-  password-storage safeguard, so 164.312(d) is the nearest standard rather than an exact
-  match. The kit's Argon2id cost parameters are declared in one file and should be re-tuned
-  on your own hardware.
+  authentication factors unreadable in storage and transmission). HIPAA's is 164.308(a)(5)(ii)(D),
+  Password management (Addressable): "Procedures for creating, changing, and safeguarding
+  passwords". That is a procedural specification, so the kit supports it rather than satisfying
+  it: hashing is how a password is safeguarded at rest, and the procedures around it are yours.
+  164.312(d) (Person or entity authentication) is the related technical standard. An earlier
+  version of this note said HIPAA names no password safeguard, which the regulation text
+  contradicts; checked against the eCFR on 2026-09-30. The kit's Argon2id cost parameters are
+  declared in one file and should be re-tuned on your own hardware.
 - **Access-token confidentiality.** This row is **defence in depth, and is deliberately not
   mapped to any encryption mandate.** Read the caveat below before citing it.
 
@@ -241,10 +245,16 @@ registered for it, which is how this file is kept from drifting ahead of the cod
   presented against tenant B routes correctly to B's database and still leaks nothing, yet
   authenticates a principal with no account in B. Binding the token's tenant claim to the
   resolved tenant is a separate control, and both are needed to claim Req 7 or CC6.3.
-- **Rate limiting.** No direct HIPAA technical safeguard (HIPAA handles availability via
-  administrative contingency planning, 164.308(a)(7)), hence the blank. PCI 8.3.4 is the
-  auth-lockout tie, though that clause number is **unverified** here: PCI-DSS is behind
-  registration and nobody on this project has read the text.
+- **Rate limiting.** The two halves of this row map differently. Request-rate limiting has no
+  direct HIPAA safeguard (HIPAA handles availability via administrative contingency planning,
+  164.308(a)(7)), so nothing is cited for it. Login throttling does have one: 164.308(a)(5)(ii)(C),
+  Log-in monitoring (Addressable), "Procedures for monitoring log-in attempts and reporting
+  discrepancies". The kit supplies the mechanism those procedures need, since the throttle limits
+  attempts and every failed and throttled login is an audit event with its reason, while the
+  monitoring and reporting procedures themselves are organizational. An earlier version left the
+  HIPAA cell blank for the whole row, which understated what the kit does; checked against the
+  eCFR on 2026-09-30. PCI 8.3.4 is the auth-lockout tie, though that clause number is
+  **unverified** here: PCI-DSS is behind registration and nobody on this project has read the text.
 
   **A correction, and the reason the row is now split in two.** An earlier version of this file
   claimed that "SOC 2 CC6.6 points of focus explicitly include rate limiting and DDoS". That could
