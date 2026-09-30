@@ -57,8 +57,13 @@ done
 db_clause=""
 for p in "${PREFIXES[@]}"; do
   [ -n "$db_clause" ] && db_clause="$db_clause OR "
-  # tenant slugs become database names with hyphens turned into underscores
-  db_clause="${db_clause}datname LIKE 'tenant_$(printf '%s' "$p" | tr '-' '_')%'"
+  # tenant slugs become database names with hyphens turned into underscores. Every _ is then escaped:
+  # in LIKE, _ means "any one character", and these patterns are full of literal underscores, so an
+  # unescaped `tenant_smoke_%` also matched a real tenant called "smokeshop" (tenant_smokeshop). The
+  # drop below re-checks each name with a literal bash match and would have skipped it, but the listing
+  # called it a test database and the final count then failed on it.
+  like_prefix=$(printf 'tenant_%s' "$(printf '%s' "$p" | tr '-' '_')" | sed 's/_/\\_/g')
+  db_clause="${db_clause}datname LIKE '${like_prefix}%'"
 done
 
 rows=$(psql_admin_query "SELECT datname FROM pg_database WHERE $db_clause ORDER BY datname" | grep . || true)
