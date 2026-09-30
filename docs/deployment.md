@@ -24,7 +24,7 @@ inconvenience: a container that serves traffic should not also carry the tool th
 schema, and the audit-log design below depends on that separation. An image able to do both would
 quietly collapse it.
 
-Three details in the Dockerfile worth knowing before editing it:
+Five details in the Dockerfile worth knowing before editing it:
 
 - **Debian slim, not Alpine.** `argon2` ships prebuilt binaries against glibc. On musl it compiles from
   source, which means a C toolchain in the image and a build that has to succeed on every architecture
@@ -36,6 +36,15 @@ Three details in the Dockerfile worth knowing before editing it:
 - **`pnpm deploy` runs with `--ignore-scripts`, and it is required.** `packages/db`'s `postinstall`
   calls the `prisma` CLI that `--prod` has just excluded. Skipping it is safe because the generated
   clients are already compiled into `dist`.
+- **`pnpm deploy` also needs `--legacy`, since pnpm 10.** Without it the deploy refuses a workspace that does
+  not inject its packages (`ERR_PNPM_DEPLOY_NONINJECTED_WORKSPACE`), and injecting would change how every
+  package links in development. The pnpm 11 upgrade (#45) broke this step, and because nothing built the
+  image, it stayed broken for a month; the **Container image** job in CI now builds both targets and boots
+  the runtime one on every push.
+- **The base image is pinned by digest**, `node:24-bookworm-slim@sha256:...`, for the reason every GitHub
+  Action here is pinned to a commit: a tag can be re-pointed. Dependabot's `docker` ecosystem proposes each
+  new digest as a PR, and a Node major is a decision made in `.nvmrc` and here together, so it is not
+  proposed.
 
 The image also has to carry `packages/db/sql/*.sql`, because `ConnectionManager` reads
 `tenant-schema.sql` and `audit-immutability.sql` at **provisioning** time via
@@ -48,8 +57,11 @@ and the service starts, passes its health check, and then fails the first time a
 docker run --rm --env-file .env -p 3011:3011 crbk-auth
 ```
 
-The container runs as the unprivileged `node` user, and `node` is PID 1 so `SIGTERM` reaches it
-directly. That matters: the shutdown hooks are what close the pg pools and send Redis `QUIT` instead of
+The container runs as the unprivileged `node` user, and its files are **owned by root**: readable by that
+user and not writable by it. A process that can rewrite its own files hands a compromise more than the
+process, and one file here matters in particular: `audit-immutability.sql`, which provisioning applies to
+every new tenant database. The Container image job checks both properties. `node` is PID 1, so `SIGTERM`
+reaches it directly. That matters: the shutdown hooks are what close the pg pools and send Redis `QUIT` instead of
 dropping in-flight commands, and they do not run if a shell swallows the signal.
 
 `HEALTHCHECK` probes `/api/health` rather than checking that the process is alive, because those are
