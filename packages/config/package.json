@@ -9,7 +9,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "dotenv": "^18.0.1",
+    "dotenv": "^18.0.5",
     "zod": "^4.6.5"
   }
 }
