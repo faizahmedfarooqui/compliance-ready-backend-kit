@@ -27,7 +27,7 @@
 # built. Pinned to the multi-arch index, so amd64 and arm64 builds each get their own matching image.
 # Dependabot's docker ecosystem proposes each new digest as a PR, which is how base-image security
 # updates arrive reviewed instead of silently at the next rebuild.
-FROM node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS builder
+FROM node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS builder
 
 WORKDIR /app
 
@@ -99,7 +99,7 @@ RUN pnpm deploy --legacy --filter @compliance-kit/auth-service --prod --ignore-s
 # ---------------------------------------------------------------------------
 # runtime: the default target
 # ---------------------------------------------------------------------------
-FROM node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS runtime
+FROM node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS runtime
 
 # curl is here for the HEALTHCHECK below and is the only addition to the base image. Nothing else is
 # installed: no shell utilities, no build toolchain, no prisma CLI.

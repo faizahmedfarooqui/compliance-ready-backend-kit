@@ -93,6 +93,14 @@ These change what a client or an operator observes. Read them before upgrading.
   find-my-way now sit at the versions actually resolved.
 - **dotenv 18**, a major. It drops `-r dotenv/config` preloading and `.env.vault` support. The kit uses neither;
   a project built on it that does needs `dotenv run -- <command>` instead.
+- **2026-10-16 pass:** fastify 5.12.7, a security release for
+  [GHSA-389g-gv7q-r4x8](https://github.com/fastify/fastify/security/advisories/GHSA-389g-gv7q-r4x8) (low),
+  which the kit does not reach because it declares no `propertyNames` header schema. `source-map-js` 1.2.2
+  through a new `source-map-js@1` override, for
+  [GHSA-68fv-2mgg-jv7q](https://github.com/advisories/GHSA-68fv-2mgg-jv7q) (high, dev-only, via the
+  coverage tooling). Patch and minor releases of NestJS (12.1.3), pg, dotenv, zod, @fastify/static, ESLint,
+  Prettier and typescript-eslint, and new pins for the Node base image, setup-node, upload-artifact and
+  CodeQL.
 
 ### Build and CI
 
