@@ -37,7 +37,7 @@ allowBuilds:
 # fast-uri from 4.1.5 back to 4.1.4 that way, and 4.1.4 later turned out vulnerable.
 overrides:
   find-my-way@9: ^9.9.0
-  fastify@5: ^5.12.5
+  fastify@5: ^5.12.7
   js-yaml@5: ^5.4.2
   js-yaml@4: ^4.3.2
   fast-uri@4: ^4.2.1
@@ -46,6 +46,7 @@ overrides:
   brace-expansion@1: ^1.1.21
   deepmerge-ts@7: ^8.0.2
   mysql2@3: ^3.24.4
+  source-map-js@1: ^1.2.2
 
 # Advisories accepted with a documented reason. Every entry here must have a matching
 # entry in SECURITY.md's "Accepted advisories" table. Empty since 2026-09-30: the last
