@@ -248,6 +248,21 @@ down inside the range without any check noticing. And when a consumer starts dec
 above the floor by itself, check whether the override is holding it back: `js-yaml` and `find-my-way`
 were both pinned below what the packages that use them ask for.
 
+The 2026-10-16 pass found one advisory in the global database and one only in a repository.
+[GHSA-68fv-2mgg-jv7q](https://github.com/advisories/GHSA-68fv-2mgg-jv7q) (high, CVE-2026-93749), an
+event-loop denial of service through indexed source-map section offsets in `source-map-js` below 1.2.2,
+reaches us only as `@vitest/coverage-v8 > magicast > source-map-js` and through Prisma's CLI config
+loader, so it runs only in build, test and migration tooling, over this repository's own files, and never in the request path. `magicast` declares
+`^1.2.1`, which admits the fix, but a lockfile refresh did not move it, so it is fixed with
+`source-map-js@1: ^1.2.2`, the version that resolved. **Revisit when** `magicast` declares 1.2.2 or later,
+and delete the override then.
+[GHSA-389g-gv7q-r4x8](https://github.com/fastify/fastify/security/advisories/GHSA-389g-gv7q-r4x8) (low,
+2026-10-13) was a repository advisory only: Fastify did not lowercase header names held in a
+`propertyNames` `enum` or `const`, so a header deny-list written in canonical case never matched. Not
+reachable here, since no schema in the kit uses `propertyNames` or `patternProperties` and request
+headers are read by guards, not validated by a Fastify schema. Fastify is in the request path, so the
+`fastify@5` floor moved to 5.12.7 anyway, the version that resolved.
+
 ### Install scripts are denied by default
 
 `pnpm-workspace.yaml` carries an `allowBuilds` map, and anything absent from it is denied.
