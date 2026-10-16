@@ -17,8 +17,9 @@
 
 set -euo pipefail
 
-# Every prefix a test path is allowed to create. Keep in step with scripts/smoke-test.sh.
-PREFIXES=(smoke- rc- shape- leakchk- e500)
+# Every prefix a test path is allowed to create. Keep in step with scripts/smoke-test.sh, and with
+# packages/db/src/tenants/provisioning-probe.ts, which names its tenants resume-*.
+PREFIXES=(smoke- rc- shape- leakchk- e500 resume-)
 CONTAINER="${POSTGRES_CONTAINER:-compliance-ready-backend-kit-postgres-1}"
 APPLY=false
 [ "${1:-}" = "--yes" ] && APPLY=true

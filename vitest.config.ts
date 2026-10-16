@@ -63,6 +63,8 @@ export default defineConfig({
          *                        break kinds is reported: altered field, removed event, missing genesis
          *   - contention-probe.ts  50 concurrent appends against real Postgres, asserting the fork guard
          *                        never fires
+         *   - provisioning-probe.ts  every interrupted-provisioning state staged for real and resumed,
+         *                        plus the two databases a retry must refuse, in the CI step of that name
          *   - seed-tenant-admin.ts  step 4 of scripts/smoke-test.sh
          *   - decode-token.ts    steps 5, 6, 9 and 16 of scripts/smoke-test.sh
          *
@@ -76,6 +78,7 @@ export default defineConfig({
         "packages/db/src/keys/manage-keys.ts",
         "packages/db/src/audit/verify-chain.ts",
         "packages/db/src/audit/contention-probe.ts",
+        "packages/db/src/tenants/provisioning-probe.ts",
         "packages/db/src/keys/decode-token.ts",
         "packages/db/src/seed/**",
       ],

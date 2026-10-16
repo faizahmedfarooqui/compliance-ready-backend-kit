@@ -43,6 +43,7 @@
     "audit:contention": "node packages/db/dist/audit/contention-probe.js",
     "audit:verify": "node packages/db/dist/audit/verify-chain.js",
     "audit:immutability": "node packages/db/dist/audit/immutability-probe.js",
+    "provisioning:probe": "node packages/db/dist/tenants/provisioning-probe.js",
     "clean:test-tenants": "./scripts/clean-test-tenants.sh"
   },
   "devDependencies": {

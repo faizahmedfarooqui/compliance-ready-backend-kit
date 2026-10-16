@@ -77,7 +77,7 @@ pnpm verify:claims
 ```
 
 It runs the real suites and reports every result grouped by the control it supports, with that
-control's HIPAA, PCI-DSS and SOC 2 citation next to it. Currently **59 items across the nine
+control's HIPAA, PCI-DSS and SOC 2 citation next to it. Currently **61 items across the nine
 Implemented rows**, plus one more on a Partial row: `pnpm audit` under vulnerability management,
 which is included because the part of that row which does exist is runnable, and excluded from the
 Implemented count because the row is not Implemented.
@@ -106,7 +106,7 @@ The underlying evidence, per row:
 
 | Row | Verify with |
 | --- | --- |
-| Multi-tenant isolation | `pnpm smoke` step 11 |
+| Multi-tenant isolation | `pnpm smoke` step 11, `pnpm provisioning:probe` (a retry never adopts a database built for another tenant) |
 | RBAC / access control | `pnpm smoke` steps 7 to 9 |
 | Password storage (Argon2id) | `pnpm test` (`passwords.spec.ts`) |
 | Access-token confidentiality | `pnpm smoke` steps 5, 6, 13 |

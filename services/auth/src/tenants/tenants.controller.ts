@@ -59,6 +59,8 @@ export class TenantsController {
       "Creates NO users. The first administrator is seeded separately with `pnpm db:seed:admin`, so no " +
       "credential travels in this request body and granting a human administrative access stays a " +
       "distinct, separately auditable step.\n\n" +
+      "Safe to retry. If an earlier call failed partway, repeating it with the same slug and the same " +
+      "name resumes that provisioning and answers 201, rather than 409.\n\n" +
       "Limited to 30 per hour. Rate limiting runs before authentication, so rejected calls also spend " +
       "budget.",
   })
@@ -68,7 +70,14 @@ export class TenantsController {
     "Missing, malformed, or wrong control-plane credential. One response for all three.",
     "CONTROL_PLANE_UNAUTHORIZED",
   )
-  @ApiProblem(409, "A tenant with that slug already exists.", "TENANT_ALREADY_EXISTS")
+  // One entry for both codes: OpenAPI keys responses by status, so a second 409 would replace this one.
+  @ApiProblem(
+    409,
+    "A tenant with that slug already exists (`code`: `TENANT_ALREADY_EXISTS`), including one whose " +
+      "provisioning did not finish but was requested with a different name; or another request is " +
+      "provisioning that slug right now (`code`: `TENANT_PROVISIONING_IN_PROGRESS`), so retry once it " +
+      "has finished.",
+  )
   @ApiCommonErrors()
   provision(@Body() dto: ProvisionTenantDto): Promise<Tenant> {
     return this.tenants.provision(dto);

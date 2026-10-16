@@ -65,15 +65,43 @@ surgically extracting rows from a shared backup.
 
 1. Derive a safe database name from the slug (`tenant_<slug>`, lowercased, non-alphanumerics to
    underscores) and validate it against a strict identifier pattern.
-2. Insert the registry row with status `provisioning`.
-3. `CREATE DATABASE`.
-4. Inside one transaction against the new database: apply the generated tenant DDL, apply
-   `packages/db/sql/audit-immutability.sql`, seed the permission catalogue and the `tenant-admin` role.
-5. Mark the registry row `active`.
-6. Append a `tenant.provisioned` event to the **master** chain.
+2. Take an advisory lock for that database name on the master database, held for the whole run, so
+   two requests can never provision one tenant at once. A request that finds it held gets
+   `409 TENANT_PROVISIONING_IN_PROGRESS`.
+3. Insert the registry row with status `provisioning`, or continue the one a failed run left.
+4. `CREATE DATABASE`, unless a failed run already did.
+5. Inside one transaction against the new database: apply the generated tenant DDL, apply
+   `packages/db/sql/audit-immutability.sql`, seed the permission catalogue and the `tenant-admin` role,
+   and, as the last statement, mark the database as built for this registry row.
+6. Mark the registry row `active`.
+7. Append a `tenant.provisioned` event to the **master** chain.
 
-The status field is what makes step 3 and 4 safe to fail: a tenant stuck in `provisioning` is not
+The status field is what makes steps 4 and 5 safe to fail: a tenant stuck in `provisioning` is not
 resolvable, so a half-built database is never served. `TenantGuard` resolves only `active` tenants.
+
+### When provisioning fails partway
+
+Repeat the request, with the same slug and the same name. It resumes where the failed run stopped and
+answers `201`, and its `tenant.provisioned` event carries `resumed: "true"`, the only trace in the chain
+that the first attempt failed, since a failed attempt records nothing.
+
+Each step checks what a failed run already did and does only what is missing, which covers every place a
+run can stop: before the database was created, after it was created but before the schema transaction
+committed, and after the database was fully built but before the row was marked `active`. A different
+name is still `409 TENANT_ALREADY_EXISTS`, because that is a different request that wants the same slug.
+
+**The marker is what keeps a retry from adopting someone else's database.** A database named
+`tenant_<slug>` is not necessarily this tenant's. A tenant whose registry row was deleted and its database
+kept leaves exactly such a database behind, and a new tenant with the same slug would otherwise be handed
+its users and audit log. So step 5 ends by setting the database's `COMMENT` to `crbk-tenant:<row id>`,
+in the same transaction as the schema, which means a database carries the marker exactly when its build
+committed, and names the row it was built for. A retry accepts a finished database only if the marker
+names its own row. A database marked for another row, or one that holds the tenant schema with no marker,
+is refused with a 500 whose log line names `TenantDatabaseConflictError`, and is left untouched. What to
+do then is in [operations](operations.md#recover-a-provisioning-that-failed).
+
+`pnpm provisioning:probe` stages each of those states against real Postgres; see
+[testing](testing.md#what-each-separate-probe-covers).
 
 **Provisioning creates no users.** That is a security decision, covered below.
 

@@ -231,6 +231,21 @@ export class TenantAlreadyExistsError extends DomainError {
   }
 }
 
+/**
+ * Another request is provisioning this slug right now. Distinct from TenantAlreadyExistsError because
+ * a client has to act differently: that one is final, this one is worth retrying once the other request
+ * has finished, when the tenant is either active or resumable.
+ */
+export class TenantProvisioningInProgressError extends DomainError {
+  constructor(slug: string) {
+    super(
+      "Tenant provisioning in progress",
+      `Tenant "${slug}" is being provisioned by another request. Retry once that request has finished.`,
+      "TENANT_PROVISIONING_IN_PROGRESS",
+    );
+  }
+}
+
 export class EmailAlreadyRegisteredError extends DomainError {
   constructor() {
     super(

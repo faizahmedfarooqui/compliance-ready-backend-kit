@@ -266,6 +266,15 @@ jobs:
       - name: Audit chain holds under concurrent appends
         run: pnpm audit:contention --appends 50
 
+      # Failure paths, which the smoke test cannot reach: it has no way to stop a provisioning halfway.
+      # The probe stages each state an interrupted run leaves (a registry row with no database, an empty
+      # database, a built database whose status update was lost) and requires a retry to finish it
+      # without building anything twice. It also stages the two databases a retry must refuse, one
+      # marked for another tenant and one holding the tenant schema with no marker, and requires each
+      # to be left exactly as it was, since adopting either would give one tenant another's data.
+      - name: Interrupted provisioning resumes, and a database it did not build is refused
+        run: pnpm provisioning:probe
+
       # The append-only claim itself, which nothing here checked until now. `audit:verify` proves a chain
       # is internally consistent and the contention probe proves it cannot fork; neither one attempts a
       # modification, so COMPLIANCE.md's "append-only" row rested on a manual check from 2026-07-30.

@@ -70,10 +70,15 @@ curl -X POST localhost:3011/api/tenants \
 The slug pattern is strict because the slug reaches an identifier position in DDL: it becomes the database
 name as `tenant_<slug>`. It is validated again downstream rather than trusted once.
 
-Responses: `201` on success, `401 CONTROL_PLANE_UNAUTHORIZED` without a valid credential,
-`409 TENANT_ALREADY_EXISTS` on a duplicate slug, `422 VALIDATION_FAILED` on a bad slug or name.
+Responses: `201` on success, including when the request repeats one that failed partway, which it
+then resumes; `401 CONTROL_PLANE_UNAUTHORIZED` without a valid credential; `409 TENANT_ALREADY_EXISTS`
+on a duplicate slug, including a slug whose provisioning did not finish but was requested with a
+different name; `409 TENANT_PROVISIONING_IN_PROGRESS` while another request is provisioning the same
+slug; `422 VALIDATION_FAILED` on a bad slug or name. See
+[multi-tenancy](multi-tenancy.md#when-provisioning-fails-partway).
 
-Emits `tenant.provisioned` to the master audit chain, with actor type `control_plane` and no actor id.
+Emits `tenant.provisioned` to the master audit chain, with actor type `control_plane` and no actor id,
+and with `resumed: "true"` in its metadata when it finished a provisioning an earlier request started.
 See [audit log](audit-log.md#what-the-control-plane-chain-cannot-tell-you).
 
 ## `POST /api/auth/register`
