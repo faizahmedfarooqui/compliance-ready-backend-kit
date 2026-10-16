@@ -15,10 +15,11 @@ What is proven, how, and the deliberate decision not to unit test the database l
 | `pnpm verify:claims` | all of the above, reported per compliance control | everything |
 | `pnpm verify:coverage` | static evidence-coverage gate | nothing |
 
-CI runs every one of them on every commit, in two jobs: one that needs no database (lint, format, unit
-tests with coverage, the coverage gate) and one that runs against real Postgres and Redis service
-containers. The database-backed job additionally exercises key rotation and revocation, which is not unit
-tested for the reasons below.
+CI runs every one of them on every commit except `pnpm verify:claims`, whose suites it already runs one by
+one (the smoke suite runs `audit:verify` itself). It does so in three jobs: one that needs no database
+(lint, format, unit tests with coverage, the coverage gate), one that runs against real Postgres and Redis
+service containers, and one that builds the container image and boots it. The database-backed job
+additionally exercises key rotation and revocation, which is not unit tested for the reasons below.
 
 ## Reading the results by control instead of by suite
 

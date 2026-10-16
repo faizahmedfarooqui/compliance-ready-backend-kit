@@ -90,10 +90,20 @@ Before opening a pull request, run what CI runs:
 ```bash
 pnpm build              # MUST come first, see below
 pnpm typecheck          # must pass clean, strict mode, no warnings suppressed
+pnpm lint
+pnpm format:check       # `pnpm format` rewrites what it reports
+pnpm test:coverage      # NOT `pnpm test`, which skips the coverage thresholds CI enforces
+pnpm verify:coverage    # every Implemented row in COMPLIANCE.md has registered evidence
 pnpm db:tenant-ddl      # must produce no diff, see "Changing a database schema"
 pnpm start:auth &       # then, in another shell:
 pnpm smoke              # all checks must pass
 ```
+
+CI also runs four probes against the running service (the slowloris request-timeout probe,
+`audit:contention`, `audit:immutability`, and a key rotation and revocation pass), and builds and
+boots the container image. Run the probes if you touch request limits, the audit log or the key
+lifecycle, and `docker build .` if you touch the Dockerfile, a dependency or the workspace layout.
+`.github/workflows/ci.yml` has each one exactly as CI runs it.
 
 `pnpm build` has to run before `pnpm typecheck`, and the order is not cosmetic. Workspace
 packages resolve each other through their `package.json` `"main"`/`"types"`, which point into
