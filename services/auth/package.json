@@ -13,7 +13,7 @@
     "@compliance-kit/config": "workspace:*",
     "@compliance-kit/crypto": "workspace:*",
     "@compliance-kit/db": "workspace:*",
-    "@fastify/static": "^10.1.6",
+    "@fastify/static": "^10.1.7",
     "@nestjs/common": "^12.1.2",
     "@nestjs/core": "^12.1.2",
     "@nestjs/platform-fastify": "^12.1.2",
