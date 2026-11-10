@@ -9,8 +9,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "argon2": "^0.45.1",
-    "jose": "^6.2.12"
+    "argon2": "^0.45.2",
+    "jose": "^6.2.15"
   },
   "devDependencies": {
     "@types/node": "^24.19.2"
